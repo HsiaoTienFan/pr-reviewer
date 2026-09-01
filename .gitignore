@@ -1,0 +1,15 @@
+# Build output — the .app bundle and generated icon are reproducible via
+# packaging/build_app.sh, so they don't belong in the repo.
+build/
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# macOS
+.DS_Store

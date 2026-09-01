@@ -1,0 +1,1135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PR Reviewer — App Mockup</title>
+<style>
+  :root {
+    --bg: #f6f8fa;
+    --panel: #ffffff;
+    --border: #d1d9e0;
+    --text: #1f2328;
+    --muted: #59636e;
+    --green: #1a7f37;
+    --green-bg: #dafbe1;
+    --amber: #9a6700;
+    --amber-bg: #fff8c5;
+    --red: #cf222e;
+    --red-bg: #ffebe9;
+    --blue: #0969da;
+    --blue-bg: #ddf4ff;
+    --purple: #8250df;
+    --purple-bg: #fbefff;
+    --add-bg: #e6ffec;
+    --del-bg: #ffebe9;
+    --hl: #fff3c2;
+    --hl-border: #d4a72c;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  }
+
+  /* ===== App nav ===== */
+  nav.appnav {
+    background: #1f2328; color: #fff; display: flex; align-items: center; gap: 4px;
+    padding: 0 16px; position: sticky; top: 0; z-index: 50; height: 46px;
+  }
+  .brand { font-weight: 700; font-size: 14px; margin-right: 14px; display: flex; align-items: center; gap: 7px; }
+  .brand .logo { background: var(--blue); border-radius: 6px; width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center; font-size: 12px; }
+  .navlink {
+    color: #c9d1d9; padding: 5px 11px; border-radius: 6px; cursor: pointer; font-size: 13px; user-select: none;
+  }
+  .navlink:hover { background: #ffffff1a; color: #fff; }
+  .navlink.active { background: #ffffff26; color: #fff; font-weight: 600; }
+  .nav-right { margin-left: auto; display: flex; align-items: center; gap: 10px; font-size: 12px; color: #c9d1d9; }
+  .claude-status { display: flex; align-items: center; gap: 6px; cursor: pointer; padding: 4px 10px; border-radius: 6px; }
+  .claude-status:hover { background: #ffffff1a; }
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; background: #3fb950; }
+
+  .screen { display: none; }
+  .screen.visible { display: block; }
+
+  /* ===== Shared bits ===== */
+  .badge {
+    display: inline-flex; align-items: center; gap: 4px;
+    font-size: 11px; font-weight: 600; padding: 1.5px 8px; border-radius: 10px;
+  }
+  .badge.linear { background: var(--purple-bg); color: var(--purple); }
+  .badge.jira { background: var(--blue-bg); color: var(--blue); }
+  .badge.prdesc { background: var(--blue-bg); color: var(--blue); }
+  .badge.none { background: #eff2f5; color: var(--muted); }
+
+  .pill { font-size: 10.5px; font-weight: 700; padding: 1.5px 8px; border-radius: 10px; white-space: nowrap; }
+  .pill.ok { background: var(--green-bg); color: var(--green); }
+  .pill.warn { background: var(--amber-bg); color: var(--amber); }
+  .pill.err { background: var(--red-bg); color: var(--red); }
+  .pill.idle { background: #eff2f5; color: var(--muted); }
+
+  /* ============================================================
+     Screen: Command Center
+     ============================================================ */
+  .cc-wrap { max-width: 1060px; margin: 0 auto; padding: 22px 20px; }
+  .cc-head { display: flex; align-items: center; gap: 14px; margin-bottom: 16px; }
+  .cc-head h1 { font-size: 19px; margin: 0; }
+  .url-entry { margin-left: auto; display: flex; gap: 6px; }
+  .url-entry input {
+    width: 320px; padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; font-size: 13px;
+  }
+  .url-entry button {
+    padding: 6px 14px; border-radius: 6px; border: none; background: var(--blue); color: #fff;
+    font-size: 13px; font-weight: 600; cursor: pointer;
+  }
+
+  .filterbar { display: flex; gap: 6px; margin-bottom: 16px; }
+  .filter {
+    font-size: 12.5px; font-weight: 600; color: var(--muted); background: var(--panel);
+    border: 1px solid var(--border); border-radius: 16px; padding: 4px 13px; cursor: pointer; user-select: none;
+  }
+  .filter:hover { border-color: var(--blue); color: var(--blue); }
+  .filter.active { background: var(--blue); border-color: var(--blue); color: #fff; }
+  .badge.reviewreq { background: var(--blue-bg); color: var(--blue); }
+
+  .repo-group { margin-bottom: 20px; }
+  .repo-name { font-family: var(--mono); font-size: 12.5px; color: var(--muted); margin: 0 2px 7px; }
+  .pr-row {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+    padding: 11px 16px; margin-bottom: 7px; display: grid;
+    grid-template-columns: minmax(0,1fr) auto auto; gap: 4px 18px; align-items: center; cursor: pointer;
+    transition: border-color .12s, box-shadow .12s;
+  }
+  .pr-row:hover { border-color: var(--blue); box-shadow: 0 1px 4px #0969da22; }
+  .pr-row .t { font-weight: 600; font-size: 14px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .pr-row .num { color: var(--muted); font-weight: 400; }
+  .pr-row .sub { grid-column: 1; color: var(--muted); font-size: 12px; display: flex; gap: 10px; align-items: center; }
+  .pr-row .sub code { font-family: var(--mono); font-size: 11px; }
+  .review-state { text-align: right; font-size: 12px; grid-row: span 2; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+  .rs-detail { color: var(--muted); font-size: 11.5px; }
+  .go { grid-row: span 2; color: var(--muted); font-size: 16px; }
+
+  /* ============================================================
+     Screen: Review  (unchanged design from v1 mockup)
+     ============================================================ */
+  header.review-head {
+    background: var(--panel); border-bottom: 1px solid var(--border);
+    padding: 12px 20px; position: sticky; top: 46px; z-index: 20;
+  }
+  .crumb { font-size: 12px; color: var(--muted); margin-bottom: 4px; cursor: pointer; }
+  .crumb:hover { color: var(--blue); }
+  .pr-title { font-size: 17px; font-weight: 600; }
+  .pr-title .num { color: var(--muted); font-weight: 400; }
+  .pr-meta { margin-top: 3px; color: var(--muted); font-size: 12.5px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  .verify-progress { margin-left: auto; font-size: 12.5px; color: var(--muted); }
+  .verify-progress b { color: var(--green); }
+  .net-effect {
+    margin-top: 10px; background: var(--bg); border: 1px solid var(--border);
+    border-radius: 8px; padding: 8px 14px; font-size: 13px;
+  }
+  .net-effect .ne-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin-right: 6px; }
+  .net-effect ul { margin: 4px 0 0; padding-left: 18px; }
+  .net-effect li { margin: 1px 0; }
+
+  /* requirements legend — always-visible text reference */
+  .req-legend { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 3px 16px; font-size: 12px; }
+  .lg-item { cursor: pointer; display: inline-flex; align-items: center; gap: 5px; color: var(--text); }
+  .lg-item:hover { text-decoration: underline; }
+  .lg-glyph.fulfilled { color: var(--green); } .lg-glyph.partial { color: var(--amber); }
+  .lg-glyph.notfound { color: var(--red); } .lg-glyph.unexplained { color: var(--amber); }
+
+  /* collapsible original source text */
+  details.source-text { margin-top: 8px; font-size: 12.5px; }
+  details.source-text summary { cursor: pointer; color: var(--muted); user-select: none; }
+  details.source-text summary:hover { color: var(--blue); }
+  .source-body {
+    margin-top: 7px; background: var(--bg); border: 1px solid var(--border);
+    border-radius: 8px; padding: 10px 14px; color: var(--text);
+  }
+  .source-body b { font-size: 12px; }
+  .source-body p { margin: 3px 0 10px; }
+  .source-body u { text-decoration-thickness: 2px; text-underline-offset: 2.5px; }
+
+  .main { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 16px; padding: 16px 20px; align-items: start; }
+
+  .file { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 14px; overflow: hidden; }
+  .file-header {
+    padding: 7px 12px; background: var(--bg); border-bottom: 1px solid var(--border);
+    font-family: var(--mono); font-size: 12.5px; display: flex; align-items: center; gap: 8px;
+  }
+  .file-status { font-size: 10.5px; font-weight: 700; padding: 1px 6px; border-radius: 8px; font-family: -apple-system, sans-serif; }
+  .file-status.mod { background: var(--amber-bg); color: var(--amber); }
+  .file-status.new { background: var(--green-bg); color: var(--green); }
+  .file-chips { margin-left: auto; display: flex; gap: 5px; }
+  .chip {
+    font-family: -apple-system, sans-serif; font-size: 10.5px; font-weight: 600;
+    padding: 1px 7px; border-radius: 8px; cursor: pointer; border: 1px solid transparent;
+  }
+  .chip:hover { border-color: currentColor; }
+
+  /* requirement identity tags in the diff gutter */
+  .diff .tags { width: 62px; background: var(--bg); border-left: 1px solid #eaeef2; padding: 1px 4px; }
+  .rtag {
+    display: inline-block; font: 700 9.5px/1.55 -apple-system, "Segoe UI", sans-serif; color: #fff;
+    border-radius: 4px; padding: 0 4.5px; margin: 1px 2px 0 0; cursor: pointer; vertical-align: top;
+  }
+  .rtag:hover { filter: brightness(1.15); }
+  tr.hl .tags { background: var(--hl); }
+
+  table.diff { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 12px; table-layout: fixed; }
+  .diff td { padding: 1px 8px; vertical-align: top; white-space: pre-wrap; word-break: break-all; }
+  .diff .lineno {
+    width: 36px; text-align: right; color: #8c959f; user-select: none;
+    background: var(--bg); border-right: 1px solid #eaeef2; font-size: 11px; padding-top: 2px;
+  }
+  .diff td.sep { width: 1px; padding: 0; background: var(--border); }
+  .side-del { background: var(--del-bg); }
+  .side-del .marker { color: var(--red); }
+  .side-add { background: var(--add-bg); }
+  .side-add .marker { color: var(--green); }
+  .hunk-gap td { background: var(--blue-bg); color: var(--blue); font-size: 11px; padding: 2px 10px; user-select: none; }
+
+  tr.hl td.code.side-add, tr.hl td.code:not(.side-del):not(.side-add) { background: var(--hl); }
+  tr.hl td.lineno.new-no { background: var(--hl); border-left: 3px solid var(--hl-border); }
+  tr.unx td.lineno.new-no { border-left: 3px solid var(--amber); }
+
+  .rail { position: sticky; top: 234px; max-height: calc(100vh - 250px); overflow-y: auto; padding-bottom: 30px; }
+  .rail-section-label {
+    font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em;
+    color: var(--muted); margin: 14px 2px 6px;
+  }
+  .rail-section-label:first-child { margin-top: 0; }
+
+  .card {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+    padding: 10px 12px; margin-bottom: 8px; cursor: pointer; transition: box-shadow .12s, border-color .12s;
+  }
+  .card:hover { border-color: #9da7b1; }
+  .card.active { border-color: var(--hl-border); box-shadow: 0 0 0 2px #d4a72c33; }
+  .card.verified { opacity: .62; }
+  .card-top { display: flex; align-items: flex-start; gap: 8px; }
+  .rid {
+    font: 700 10.5px/1.75 -apple-system, "Segoe UI", sans-serif; color: #fff;
+    border-radius: 5px; padding: 0 6.5px; flex-shrink: 0; margin-top: 1px;
+  }
+  .status-pill { font-size: 10.5px; font-weight: 700; padding: 1.5px 8px; border-radius: 10px; white-space: nowrap; flex-shrink: 0; margin-top: 1px; }
+  .status-pill.fulfilled { background: var(--green-bg); color: var(--green); }
+  .status-pill.partial { background: var(--amber-bg); color: var(--amber); }
+  .status-pill.notfound { background: var(--red-bg); color: var(--red); }
+  .status-pill.unexplained { background: var(--amber-bg); color: var(--amber); }
+  .req-text { font-size: 13px; font-weight: 550; }
+  .card .src { margin-top: 5px; }
+  .mechanism { margin-top: 6px; font-size: 12.5px; }
+  .mechanism code, .req-text code { font-family: var(--mono); font-size: 11.5px; background: var(--bg); border: 1px solid #eaeef2; border-radius: 4px; padding: 0 3px; }
+  .missing-note { margin-top: 6px; font-size: 12.5px; color: var(--amber); }
+  .missing-note.red { color: var(--red); }
+  .anchors { margin-top: 7px; display: flex; flex-wrap: wrap; gap: 4px; }
+  .anchor {
+    font-family: var(--mono); font-size: 11px; color: var(--blue);
+    background: var(--blue-bg); border-radius: 5px; padding: 1px 7px; cursor: pointer;
+  }
+  .anchor:hover { text-decoration: underline; }
+  .card-foot { margin-top: 8px; display: flex; align-items: center; gap: 8px; }
+  .conf { font-size: 11px; color: var(--muted); }
+  .conf .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 3px; }
+  .conf.high .dot { background: var(--green); }
+  .conf.medium .dot { background: var(--amber); }
+  .conf.low .dot { background: var(--red); }
+  .verify-btn {
+    margin-left: auto; font-size: 11.5px; padding: 2.5px 10px; border-radius: 6px;
+    border: 1px solid var(--border); background: var(--panel); cursor: pointer; color: var(--muted);
+  }
+  .verify-btn:hover { border-color: var(--green); color: var(--green); }
+  .card.verified .verify-btn { background: var(--green-bg); color: var(--green); border-color: transparent; }
+
+  /* ===== Change flow diagram ===== */
+  .flow-section { padding: 0 20px 34px; }
+  .flow-panel { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; overflow-x: auto; }
+  .flow-head {
+    padding: 9px 14px; border-bottom: 1px solid var(--border); background: var(--bg);
+    display: flex; align-items: baseline; gap: 10px;
+  }
+  .flow-head .fh-title { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+  .flow-head .fh-hint { font-size: 12px; color: var(--muted); }
+  .flow-svg-wrap { padding: 6px 10px 0; }
+  .flow-legend { padding: 4px 14px 12px; font-size: 11.5px; color: var(--muted); }
+  .fnode { cursor: pointer; }
+  .fnode rect.body { fill: #fff; stroke: var(--border); rx: 7; }
+  .fnode:hover rect.body { stroke: #9da7b1; stroke-width: 1.5; }
+  .fnode text.name { font: 600 12px var(--mono); fill: var(--text); }
+  .fnode text.loc { font: 10px var(--mono); fill: var(--muted); }
+  .fnode.ghost rect.body { fill: var(--red-bg); stroke: var(--red); stroke-dasharray: 5 4; }
+  .fnode.ghost text.name { fill: var(--red); font-family: -apple-system, sans-serif; font-weight: 600; }
+  .fnode.ghost text.loc { fill: var(--red); opacity: .75; font-family: -apple-system, sans-serif; }
+  .fedge-casing { fill: none; stroke: #fff; stroke-width: 5; }
+  .fedge { fill: none; stroke-width: 1.7; opacity: .92; }
+  .fedge:hover { stroke-width: 2.6; opacity: 1; }
+  .fnode rect.body { filter: drop-shadow(0 1px 1.5px rgba(31,35,40,.08)); }
+  .fedge.missing { stroke-dasharray: 6 5; }
+  .elabel { font: 600 10.5px -apple-system, "Segoe UI", sans-serif; }
+  .elabel-bg { fill: var(--panel); opacity: .92; }
+  text.kindtag { font: 700 8.5px -apple-system, sans-serif; }
+
+  /* ============================================================
+     Screen: Settings
+     ============================================================ */
+  .settings-wrap { max-width: 760px; margin: 0 auto; padding: 22px 20px 50px; }
+  .settings-wrap h1 { font-size: 19px; margin: 0 0 4px; }
+  .settings-sub { color: var(--muted); font-size: 13px; margin-bottom: 18px; }
+  .set-section-label {
+    font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em;
+    color: var(--muted); margin: 22px 2px 8px;
+  }
+  .integration {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+    padding: 14px 16px; margin-bottom: 10px;
+  }
+  .int-head { display: flex; align-items: center; gap: 10px; }
+  .int-icon {
+    width: 30px; height: 30px; border-radius: 7px; display: flex; align-items: center; justify-content: center;
+    font-size: 15px; font-weight: 700; color: #fff; flex-shrink: 0;
+  }
+  .int-name { font-weight: 600; font-size: 14px; }
+  .int-desc { font-size: 12px; color: var(--muted); }
+  .int-head .pill { margin-left: auto; }
+  .int-body { margin-top: 12px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .int-body input {
+    flex: 1; min-width: 220px; padding: 6px 10px; border: 1px solid var(--border);
+    border-radius: 6px; font-size: 12.5px; font-family: var(--mono);
+  }
+  .btn {
+    padding: 6px 13px; border-radius: 6px; border: 1px solid var(--border);
+    background: var(--panel); font-size: 12.5px; font-weight: 600; cursor: pointer;
+  }
+  .btn:hover { border-color: var(--blue); color: var(--blue); }
+  .btn.primary { background: var(--blue); border-color: var(--blue); color: #fff; }
+  .btn.primary:hover { opacity: .92; color: #fff; }
+  .int-note { font-size: 12px; color: var(--muted); margin-top: 9px; }
+  .int-note code { font-family: var(--mono); background: var(--bg); border: 1px solid #eaeef2; border-radius: 4px; padding: 0 4px; }
+  .int-note.err { color: var(--red); }
+  .checkline { font-size: 12.5px; margin-top: 8px; display: flex; align-items: center; gap: 7px; }
+  .checkline .ok { color: var(--green); }
+  .repo-tags { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 9px; }
+  .repo-tag {
+    font-family: var(--mono); font-size: 11px; background: var(--bg); border: 1px solid var(--border);
+    border-radius: 6px; padding: 2px 8px;
+  }
+</style>
+</head>
+<body>
+
+<nav class="appnav">
+  <span class="brand"><span class="logo">⇄</span> PR Reviewer</span>
+  <span class="navlink" data-nav="command-center">Command Center</span>
+  <span class="navlink" data-nav="review">Review</span>
+  <span class="navlink" data-nav="settings">Settings</span>
+  <span class="nav-right">
+    <span class="claude-status" data-nav="settings" title="Claude backend ready — click for settings">
+      <span class="status-dot"></span> Claude · subscription
+    </span>
+  </span>
+</nav>
+
+<!-- ============================================================
+     COMMAND CENTER
+     ============================================================ -->
+<section class="screen" id="screen-command-center">
+  <div class="cc-wrap">
+    <div class="cc-head">
+      <h1>Open pull requests</h1>
+      <div class="url-entry">
+        <input type="text" placeholder="…or paste any PR URL (GitHub / Bitbucket)">
+        <button>Review</button>
+      </div>
+    </div>
+
+    <div class="filterbar">
+      <span class="filter active" data-filter="all">All · 5</span>
+      <span class="filter" data-filter="assigned">Needs my review · 2</span>
+      <span class="filter" data-filter="mine">My PRs · 2</span>
+    </div>
+
+    <div class="repo-group">
+      <div class="repo-name">github.com/fanaticdan/authsvc</div>
+
+      <div class="pr-row" data-open-review="true" data-role="mine">
+        <div class="t">Add login rate limiting &amp; account lockout <span class="num">#482</span>
+          <span class="badge linear">◆ ENG-142</span>
+        </div>
+        <div class="sub"><code>feature/eng-142-login-lockout</code> · danielfan · updated 2h ago · +61 −3</div>
+        <div class="review-state">
+          <span class="pill warn">◐ 2/4 fulfilled</span>
+          <span class="rs-detail">1 partial · 1 gap · 1 unexplained</span>
+        </div>
+        <span class="go">›</span>
+      </div>
+
+      <div class="pr-row" data-role="assigned">
+        <div class="t">Migrate session store to Redis <span class="num">#479</span>
+          <span class="badge linear">◆ ENG-138</span>
+          <span class="badge reviewreq">review requested</span>
+        </div>
+        <div class="sub"><code>feature/eng-138-redis-sessions</code> · mchen · updated 5h ago · +214 −180</div>
+        <div class="review-state">
+          <span class="pill ok">✓ 3/3 fulfilled</span>
+          <span class="rs-detail">6/6 claims verified</span>
+        </div>
+        <span class="go">›</span>
+      </div>
+
+      <div class="pr-row" data-role="other">
+        <div class="t">Fix flaky test in token refresh <span class="num">#484</span>
+          <span class="badge none">no ticket</span>
+        </div>
+        <div class="sub"><code>fix/flaky-token-test</code> · priya · updated 20m ago · +9 −4</div>
+        <div class="review-state">
+          <span class="pill idle">Not reviewed</span>
+          <span class="rs-detail">will run in explain mode</span>
+        </div>
+        <span class="go">›</span>
+      </div>
+    </div>
+
+    <div class="repo-group">
+      <div class="repo-name">bitbucket.org/fanaticdan/billing-api</div>
+
+      <div class="pr-row" data-role="mine">
+        <div class="t">Prorate mid-cycle plan changes <span class="num">#57</span>
+          <span class="badge jira">JIRA BILL-203</span>
+        </div>
+        <div class="sub"><code>feature/BILL-203-proration</code> · danielfan · updated 1d ago · +340 −25</div>
+        <div class="review-state">
+          <span class="pill idle">Not reviewed</span>
+          <span class="rs-detail">large PR — will chunk by file</span>
+        </div>
+        <span class="go">›</span>
+      </div>
+
+      <div class="pr-row" data-role="assigned">
+        <div class="t">Bump invoice PDF lib, silence deprecations <span class="num">#55</span>
+          <span class="badge none">no ticket</span>
+          <span class="badge reviewreq">review requested</span>
+        </div>
+        <div class="sub"><code>chore/pdf-lib-bump</code> · alexr · updated 3d ago · +18 −12</div>
+        <div class="review-state">
+          <span class="pill err">✗ 0/1 fulfilled</span>
+          <span class="rs-detail">2 unexplained changes</span>
+        </div>
+        <span class="go">›</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================
+     REVIEW  (main product)
+     ============================================================ -->
+<section class="screen" id="screen-review">
+  <header class="review-head">
+    <div class="crumb" data-nav="command-center">‹ Command Center</div>
+    <div class="pr-title">Add login rate limiting &amp; account lockout <span class="num">#482</span></div>
+    <div class="pr-meta">
+      <span><code>feature/eng-142-login-lockout</code> → <code>main</code></span>
+      <span class="badge linear">◆ ENG-142</span>
+      <span class="badge prdesc">PR description</span>
+      <span class="verify-progress"><b id="verified-count">0</b>/4 claims verified</span>
+    </div>
+    <div class="net-effect">
+      <span class="ne-label">Net effect</span>
+      <ul>
+        <li>Login now locks accounts for 15 min after repeated failures (new <code>auth/lockout.py</code>).</li>
+        <li>Lockout events logged; covered by 3 new tests.</li>
+        <li>Unrelated rename in <code>utils/logging.py</code> touches 4 call sites.</li>
+      </ul>
+    </div>
+    <div class="req-legend" id="req-legend"></div>
+    <details class="source-text">
+      <summary>Source requirements — ◆ ENG-142 · PR description</summary>
+      <div class="source-body">
+        <b>◆ ENG-142 — Harden login against brute force</b>
+        <p>Repeated failed logins are a brute-force vector. <u style="text-decoration-color:#0969da">After 5 failed attempts the account should be locked</u> for 15 minutes.
+        <u style="text-decoration-color:#0d9488">A successful login resets the failure counter.</u>
+        <u style="text-decoration-color:#8250df">Admins need a way to manually unlock an account</u> before the window expires.</p>
+        <b>PR description</b>
+        <p>Implements lockout per ENG-142. <u style="text-decoration-color:#d1247f">Lockout events are logged for audit.</u></p>
+      </div>
+    </details>
+  </header>
+  <div class="main">
+    <div class="diff-panel" id="diff-panel"></div>
+    <aside class="rail" id="rail"></aside>
+  </div>
+
+  <div class="flow-section">
+    <div class="flow-panel">
+      <div class="flow-head">
+        <span class="fh-title">Change flow</span>
+        <span class="fh-hint">how the new code interacts, colored by requirement — click a node to see its lines</span>
+      </div>
+      <div class="flow-svg-wrap" id="flow-svg-wrap">
+        <!-- flow svg is rendered by the auto-layout engine below -->
+      </div>
+      <div class="flow-legend">
+        Solid arrow = interaction in this PR, colored by requirement &nbsp;·&nbsp; dashed amber = expected but missing (partial) &nbsp;·&nbsp; dashed red node = requirement with no implementation &nbsp;·&nbsp; green stripe = new symbol, amber = modified
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================
+     SETTINGS
+     ============================================================ -->
+<section class="screen" id="screen-settings">
+  <div class="settings-wrap">
+    <h1>Settings</h1>
+    <div class="settings-sub">Integrations for PR hosts, ticket sources, and the Claude review backend. Tokens are stored locally only.</div>
+
+    <div class="set-section-label">Claude backend</div>
+    <div class="integration">
+      <div class="int-head">
+        <span class="int-icon" style="background:#D97757">✳</span>
+        <div>
+          <div class="int-name">Claude Code (subscription)</div>
+          <div class="int-desc">Runs extract &amp; map via <code>claude -p</code> on your claude.ai login — no API key.</div>
+        </div>
+        <span class="pill ok">● Ready</span>
+      </div>
+      <div class="checkline"><span class="ok">✓</span> CLI installed — v2.31.0 at <code>/usr/local/bin/claude</code></div>
+      <div class="checkline"><span class="ok">✓</span> Logged in as fanaticdan@gmail.com (Max plan)</div>
+      <div class="checkline"><span class="ok">✓</span> Schema-constrained output check passed</div>
+      <div class="int-note">Not logged in? Run <code>claude login</code> in a terminal, then hit Re-check.</div>
+      <div class="int-body"><button class="btn">Re-check</button></div>
+    </div>
+
+    <div class="set-section-label">PR hosts</div>
+    <div class="integration">
+      <div class="int-head">
+        <span class="int-icon" style="background:#1f2328"></span>
+        <div>
+          <div class="int-name">GitHub</div>
+          <div class="int-desc">Personal access token with <code>repo</code> read scope.</div>
+        </div>
+        <span class="pill ok">● Connected</span>
+      </div>
+      <div class="int-body">
+        <input type="password" value="ghp_••••••••••••••••••••••••" readonly>
+        <button class="btn">Test connection</button>
+      </div>
+      <div class="int-note">Repos shown in Command Center:</div>
+      <div class="repo-tags">
+        <span class="repo-tag">fanaticdan/authsvc</span>
+        <span class="repo-tag">+ add repo</span>
+      </div>
+    </div>
+    <div class="integration">
+      <div class="int-head">
+        <span class="int-icon" style="background:#2684FF">B</span>
+        <div>
+          <div class="int-name">Bitbucket</div>
+          <div class="int-desc">App password with pull request read scope.</div>
+        </div>
+        <span class="pill ok">● Connected</span>
+      </div>
+      <div class="int-body">
+        <input type="password" value="ATBB••••••••••••••••" readonly>
+        <button class="btn">Test connection</button>
+      </div>
+      <div class="int-note">Repos shown in Command Center:</div>
+      <div class="repo-tags">
+        <span class="repo-tag">fanaticdan/billing-api</span>
+        <span class="repo-tag">+ add repo</span>
+      </div>
+    </div>
+
+    <div class="set-section-label">Ticket sources</div>
+    <div class="integration">
+      <div class="int-head">
+        <span class="int-icon" style="background:#5E6AD2">◆</span>
+        <div>
+          <div class="int-name">Linear</div>
+          <div class="int-desc">Detects refs like <code>ENG-142</code> in branch, title, or description.</div>
+        </div>
+        <span class="pill ok">● Connected</span>
+      </div>
+      <div class="int-body">
+        <input type="password" value="lin_api_••••••••••••••••" readonly>
+        <button class="btn">Test connection</button>
+      </div>
+    </div>
+    <div class="integration">
+      <div class="int-head">
+        <span class="int-icon" style="background:#0052CC">J</span>
+        <div>
+          <div class="int-name">Jira</div>
+          <div class="int-desc">Detects refs like <code>BILL-203</code>. Site URL + API token.</div>
+        </div>
+        <span class="pill err">● Error</span>
+      </div>
+      <div class="int-body">
+        <input type="text" value="https://fanaticdan.atlassian.net" readonly>
+        <input type="password" value="••••••••••••" readonly>
+        <button class="btn">Test connection</button>
+      </div>
+      <div class="int-note err">401 from Jira — token may be expired. Reviews fall back to PR-description requirements for Jira-linked PRs.</div>
+    </div>
+    <div class="integration">
+      <div class="int-head">
+        <span class="int-icon" style="background:#59636e">¶</span>
+        <div>
+          <div class="int-name">PR description</div>
+          <div class="int-desc">Always on — used alone when no ticket is linked (explain mode).</div>
+        </div>
+        <span class="pill ok">● Built-in</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<script>
+/* ============================================================
+   Fake Review object — matches the DESIGN.md data model.
+   ============================================================ */
+const review = {
+  requirements: [
+    { id: "R1", text: "Lock account after 5 failed login attempts", source: "linear" },
+    { id: "R2", text: "Failure counter resets on successful login", source: "linear" },
+    { id: "R3", text: "Admins can manually unlock an account", source: "linear" },
+    { id: "R4", text: "Lockout events are logged for audit", source: "prdesc" },
+  ],
+  links: [
+    { requirement_id: "R1", status: "fulfilled", confidence: "high",
+      mechanism: "New <code>record_failure()</code> increments per-user counter; <code>check_lockout()</code> rejects once it exceeds <code>MAX_ATTEMPTS = 5</code>; wired into login at <code>login.py:44</code>.",
+      anchors: [ {file:"auth/lockout.py", start:1, end:22}, {file:"auth/login.py", start:43, end:49}, {file:"tests/test_lockout.py", start:1, end:14} ] },
+    { requirement_id: "R2", status: "partial", confidence: "medium",
+      mechanism: "<code>record_success()</code> clears the counter — but nothing calls it from the login success path.",
+      missing: "Missing: call to <code>record_success()</code> after successful auth in <code>login.py</code>.",
+      anchors: [ {file:"auth/lockout.py", start:24, end:27} ] },
+    { requirement_id: "R3", status: "notfound", confidence: "high",
+      mechanism: "",
+      missing: "No matching changes found — no unlock endpoint or admin path in this PR.",
+      anchors: [] },
+    { requirement_id: "R4", status: "fulfilled", confidence: "high",
+      mechanism: "<code>emit_event(\"account_locked\", …)</code> fired inside <code>check_lockout()</code>.",
+      anchors: [ {file:"auth/lockout.py", start:18, end:20} ] },
+  ],
+  unexplained: [
+    { id: "U1", label: "Rename log_event → emit_event",
+      mechanism: "Drive-by refactor: renames <code>log_event()</code> and updates call sites. Not referenced by ticket or description.",
+      anchors: [ {file:"utils/logging.py", start:12, end:15} ] },
+  ],
+  files: [
+    { path: "auth/lockout.py", status: "new", rows: [
+      {o:null, n:[1,  "from datetime import datetime, timedelta"]},
+      {o:null, n:[2,  "from utils.logging import emit_event"]},
+      {o:null, n:[3,  ""]},
+      {o:null, n:[4,  "MAX_ATTEMPTS = 5"]},
+      {o:null, n:[5,  "LOCKOUT_WINDOW = timedelta(minutes=15)"]},
+      {o:null, n:[6,  ""]},
+      {o:null, n:[7,  "_failures: dict[str, list[datetime]] = {}"]},
+      {o:null, n:[8,  ""]},
+      {o:null, n:[9,  "def record_failure(user_id: str) -> None:"]},
+      {o:null, n:[10, "    _failures.setdefault(user_id, [])"]},
+      {o:null, n:[11, "    _failures[user_id].append(datetime.utcnow())"]},
+      {o:null, n:[12, ""]},
+      {o:null, n:[13, "def check_lockout(user_id: str) -> bool:"]},
+      {o:null, n:[14, "    cutoff = datetime.utcnow() - LOCKOUT_WINDOW"]},
+      {o:null, n:[15, "    recent = [t for t in _failures.get(user_id, [])"]},
+      {o:null, n:[16, "              if t > cutoff]"]},
+      {o:null, n:[17, "    if len(recent) >= MAX_ATTEMPTS:"]},
+      {o:null, n:[18, "        emit_event(\"account_locked\","]},
+      {o:null, n:[19, "                   user_id=user_id,"]},
+      {o:null, n:[20, "                   attempts=len(recent))"]},
+      {o:null, n:[21, "        return True"]},
+      {o:null, n:[22, "    return False"]},
+      {o:null, n:[23, ""]},
+      {o:null, n:[24, "def record_success(user_id: str) -> None:"]},
+      {o:null, n:[25, "    \"\"\"Clear failure history after a good login.\"\"\""]},
+      {o:null, n:[26, "    _failures.pop(user_id, None)"]},
+      {o:null, n:[27, ""]},
+    ]},
+    { path: "auth/login.py", status: "mod", rows: [
+      {gap: "@@ -38,8 +38,14 @@ def login(request):"},
+      {o:[38, "def login(request):"],                 n:[38, "def login(request):"]},
+      {o:[39, "    user = get_user(request.username)"],n:[39, "    user = get_user(request.username)"]},
+      {o:[40, "    if user is None:"],                n:[40, "    if user is None:"]},
+      {o:[41, "        return err(404)"],             n:[41, "        return err(404)"]},
+      {o:null,                                        n:[42, ""]},
+      {o:null,                                        n:[43, "    if check_lockout(user.id):"]},
+      {o:null,                                        n:[44, "        return err(423, \"account locked\")"]},
+      {o:null,                                        n:[45, ""]},
+      {o:[42, "    if not verify(user, request.password):"], n:[46, "    if not verify(user, request.password):"]},
+      {o:[43, "        return err(401)"],             n:[47, "        record_failure(user.id)"]},
+      {o:null,                                        n:[48, "        return err(401)"]},
+      {o:null,                                        n:[49, ""]},
+      {o:[44, "    return session_for(user)"],        n:[50, "    return session_for(user)"]},
+    ]},
+    { path: "utils/logging.py", status: "mod", rows: [
+      {gap: "@@ -10,6 +10,6 @@"},
+      {o:[10, "import json, sys"],                    n:[10, "import json, sys"]},
+      {o:[11, ""],                                    n:[11, ""]},
+      {o:[12, "def log_event(name, **fields):"],      n:[12, "def emit_event(name, **fields):"]},
+      {o:[13, "    payload = {\"event\": name, **fields}"], n:[13, "    payload = {\"event\": name, **fields}"]},
+      {o:[14, "    sys.stdout.write(json.dumps(payload))"], n:[14, "    sys.stdout.write(json.dumps(payload))"]},
+      {o:[15, "    sys.stdout.write(\"\\n\")"],       n:[15, "    sys.stdout.write(\"\\n\")"]},
+    ]},
+    { path: "tests/test_lockout.py", status: "new", rows: [
+      {o:null, n:[1,  "from auth.lockout import ("]},
+      {o:null, n:[2,  "    record_failure, check_lockout, record_success)"]},
+      {o:null, n:[3,  ""]},
+      {o:null, n:[4,  "def test_locks_after_five_failures():"]},
+      {o:null, n:[5,  "    for _ in range(5):"]},
+      {o:null, n:[6,  "        record_failure(\"u1\")"]},
+      {o:null, n:[7,  "    assert check_lockout(\"u1\")"]},
+      {o:null, n:[8,  ""]},
+      {o:null, n:[9,  "def test_four_failures_ok():"]},
+      {o:null, n:[10, "    for _ in range(4):"]},
+      {o:null, n:[11, "        record_failure(\"u2\")"]},
+      {o:null, n:[12, "    assert not check_lockout(\"u2\")"]},
+      {o:null, n:[13, ""]},
+      {o:null, n:[14, "def test_success_resets():"]},
+    ]},
+  ],
+};
+
+/* Requirement identity colors — one stable color per requirement,
+   used identically on cards, diff gutter tags, and file-header chips. */
+const REQ_COLORS = {
+  R1: "#0969da",   // blue
+  R2: "#0d9488",   // teal
+  R3: "#8250df",   // purple
+  R4: "#d1247f",   // magenta
+  U1: "#b98300",   // amber (unexplained)
+};
+
+/* Plain-text label per id — for tooltips and the legend */
+const REQ_TEXT = {};
+for (const r of review.requirements) REQ_TEXT[r.id] = r.text;
+for (const u of review.unexplained) REQ_TEXT[u.id] = u.label;
+
+/* All requirement/unexplained ids whose anchors cover a given file:line */
+function tagsFor(file, line) {
+  const out = [];
+  for (const l of review.links)
+    if (l.anchors.some(a => a.file === file && line >= a.start && line <= a.end))
+      out.push(l.requirement_id);
+  for (const u of review.unexplained)
+    if (u.anchors.some(a => a.file === file && line >= a.start && line <= a.end))
+      out.push(u.id);
+  return out;
+}
+
+/* ============================================================
+   Screen routing
+   ============================================================ */
+function show(screenId) {
+  document.querySelectorAll(".screen").forEach(s => s.classList.remove("visible"));
+  document.getElementById("screen-" + screenId).classList.add("visible");
+  document.querySelectorAll(".navlink").forEach(n =>
+    n.classList.toggle("active", n.dataset.nav === screenId));
+  if (screenId === "review" && !window._flowDone) { window._flowDone = true; renderFlow(); }
+  window.scrollTo(0, 0);
+}
+
+/* ============================================================
+   Render: split diff
+   ============================================================ */
+const esc = s => s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+const diffPanel = document.getElementById("diff-panel");
+
+for (const f of review.files) {
+  const linkedReqs = review.links.filter(l => l.anchors.some(a => a.file === f.path)).map(l => l.requirement_id);
+  const isUnx = review.unexplained.some(u => u.anchors.some(a => a.file === f.path));
+  const chips = [
+    ...linkedReqs.map(r => `<span class="chip" data-card="${r}" style="color:${REQ_COLORS[r]};background:${REQ_COLORS[r]}1c">${r}</span>`),
+    ...(isUnx ? [`<span class="chip" data-card="U1" style="color:${REQ_COLORS.U1};background:${REQ_COLORS.U1}1c">U1 ❓</span>`] : []),
+  ].join("");
+
+  let rowsHtml = "";
+  for (const row of f.rows) {
+    if (row.gap) { rowsHtml += `<tr class="hunk-gap"><td colspan="6">${esc(row.gap)}</td></tr>`; continue; }
+    const o = row.o, n = row.n;
+    const kind = o && n ? (o[1] === n[1] ? "ctx" : "pair") : (o ? "del" : "add");
+    const oCls = (kind === "del" || kind === "pair") ? "side-del" : "";
+    const nCls = (kind === "add" || kind === "pair") ? "side-add" : "";
+    const tags = n ? tagsFor(f.path, n[0]) : [];
+    const tagsHtml = tags.map(t =>
+      `<span class="rtag" data-card="${t}" style="background:${REQ_COLORS[t]}" title="${t}: ${REQ_TEXT[t]}">${t}</span>`).join("");
+    rowsHtml += `<tr data-file="${f.path}" ${n ? `data-line="${n[0]}"` : ""}>
+      <td class="lineno old-no">${o ? o[0] : ""}</td>
+      <td class="code ${oCls}">${o ? `<span class="marker">${oCls ? "-" : " "}</span> ${esc(o[1])}` : ""}</td>
+      <td class="sep"></td>
+      <td class="lineno new-no">${n ? n[0] : ""}</td>
+      <td class="code ${nCls}">${n ? `<span class="marker">${nCls ? "+" : " "}</span> ${esc(n[1])}` : ""}</td>
+      <td class="tags">${tagsHtml}</td>
+    </tr>`;
+  }
+
+  diffPanel.insertAdjacentHTML("beforeend", `
+    <div class="file">
+      <div class="file-header">
+        <span class="file-status ${f.status}">${f.status === "new" ? "NEW" : "MODIFIED"}</span>
+        <span>${f.path}</span>
+        <span class="file-chips">${chips}</span>
+      </div>
+      <table class="diff"><colgroup>
+        <col style="width:36px"><col><col style="width:1px"><col style="width:36px"><col><col style="width:62px">
+      </colgroup>${rowsHtml}</table>
+    </div>`);
+}
+
+for (const u of review.unexplained)
+  for (const a of u.anchors)
+    for (let ln = a.start; ln <= a.end; ln++)
+      document.querySelector(`tr[data-file="${a.file}"][data-line="${ln}"]`)?.classList.add("unx");
+
+/* ============================================================
+   Render: right rail cards
+   ============================================================ */
+const rail = document.getElementById("rail");
+const statusLabel = { fulfilled: "✓ Fulfilled", partial: "◐ Partial", notfound: "✗ Not found" };
+const srcBadge = s => s === "linear" ? `<span class="badge linear">◆ ENG-142</span>` : `<span class="badge prdesc">PR description</span>`;
+
+let railHtml = `<div class="rail-section-label">Requirements · ${review.requirements.length}</div>`;
+for (const req of review.requirements) {
+  const link = review.links.find(l => l.requirement_id === req.id);
+  const anchors = link.anchors.map(a =>
+    `<span class="anchor" data-file="${a.file}" data-start="${a.start}" data-end="${a.end}">${a.file}:${a.start}–${a.end}</span>`).join("");
+  railHtml += `
+    <div class="card" id="card-${req.id}" data-card-id="${req.id}" style="border-left:4px solid ${REQ_COLORS[req.id]}">
+      <div class="card-top">
+        <span class="rid" style="background:${REQ_COLORS[req.id]}">${req.id}</span>
+        <span class="status-pill ${link.status}">${statusLabel[link.status]}</span>
+        <div>
+          <div class="req-text">${req.text}</div>
+          <div class="src">${srcBadge(req.source)}</div>
+        </div>
+      </div>
+      ${link.mechanism ? `<div class="mechanism">${link.mechanism}</div>` : ""}
+      ${link.missing ? `<div class="missing-note ${link.status === "notfound" ? "red" : ""}">${link.missing}</div>` : ""}
+      ${anchors ? `<div class="anchors">${anchors}</div>` : ""}
+      <div class="card-foot">
+        <span class="conf ${link.confidence}"><span class="dot"></span>${link.confidence} confidence</span>
+        <button class="verify-btn">Mark verified</button>
+      </div>
+    </div>`;
+}
+railHtml += `<div class="rail-section-label">Unexplained changes · ${review.unexplained.length}</div>`;
+for (const u of review.unexplained) {
+  const anchors = u.anchors.map(a =>
+    `<span class="anchor" data-file="${a.file}" data-start="${a.start}" data-end="${a.end}">${a.file}:${a.start}–${a.end}</span>`).join("");
+  railHtml += `
+    <div class="card" id="card-${u.id}" data-card-id="${u.id}" style="border-left:4px solid ${REQ_COLORS[u.id]}">
+      <div class="card-top">
+        <span class="rid" style="background:${REQ_COLORS[u.id]}">${u.id}</span>
+        <span class="status-pill unexplained">❓ Unexplained</span>
+        <div><div class="req-text">${u.label}</div></div>
+      </div>
+      <div class="mechanism">${u.mechanism}</div>
+      <div class="anchors">${anchors}</div>
+    </div>`;
+}
+rail.innerHTML = railHtml;
+
+/* ============================================================
+   Render: requirements legend in the review header
+   ============================================================ */
+const glyphs = { fulfilled: "✓", partial: "◐", notfound: "✗" };
+document.getElementById("req-legend").innerHTML = [
+  ...review.requirements.map(r => {
+    const link = review.links.find(l => l.requirement_id === r.id);
+    return `<span class="lg-item" data-card="${r.id}">
+      <span class="rid" style="background:${REQ_COLORS[r.id]};font-size:9.5px;line-height:1.6">${r.id}</span>
+      <span class="lg-glyph ${link.status}">${glyphs[link.status]}</span>${r.text}</span>`;
+  }),
+  ...review.unexplained.map(u =>
+    `<span class="lg-item" data-card="${u.id}">
+      <span class="rid" style="background:${REQ_COLORS[u.id]};font-size:9.5px;line-height:1.6">${u.id}</span>
+      <span class="lg-glyph unexplained">❓</span>${u.label}</span>`),
+].join("");
+
+
+/* ============================================================
+   Change-flow diagram — data + deterministic auto-layout.
+   In the real product the FLOW stage returns exactly this
+   {nodes, edges} shape (topology only); this renderer is the
+   layout the app will use.
+   ============================================================ */
+review.flow = {
+  nodes: [
+    { id: "login",          label: "login(request)",   file: "auth/login.py",    line: 38, kind: "modified", anchors: [{file:"auth/login.py",start:38,end:50}] },
+    { id: "record_failure", label: "record_failure()", file: "auth/lockout.py",  line: 9,  kind: "new",      anchors: [{file:"auth/lockout.py",start:9,end:11}] },
+    { id: "check_lockout",  label: "check_lockout()",  file: "auth/lockout.py",  line: 13, kind: "new",      anchors: [{file:"auth/lockout.py",start:13,end:22}] },
+    { id: "record_success", label: "record_success()", file: "auth/lockout.py",  line: 24, kind: "new",      anchors: [{file:"auth/lockout.py",start:24,end:27}] },
+    { id: "failures",       label: "_failures {}",     file: "auth/lockout.py",  line: 7,  kind: "store",    anchors: [{file:"auth/lockout.py",start:7,end:7}] },
+    { id: "emit_event",     label: "emit_event()",     file: "utils/logging.py", line: 12, kind: "modified", tags: ["U1"], anchors: [{file:"utils/logging.py",start:12,end:15}] },
+    /* duplicate node the LLM might emit — canonicalized away below: */
+    { id: "emit_event_dup", label: "emit_event()",     file: "utils/logging.py", line: 12, kind: "modified", anchors: [{file:"utils/logging.py",start:12,end:15}] },
+    { id: "ghost_r3",       label: "admin unlock — not found", sub: "R3 — no implementation in PR", kind: "ghost", card: "R3" },
+  ],
+  edges: [
+    { source: "login",          target: "record_failure", label: "on bad password",    reqs: ["R1"] },
+    { source: "login",          target: "check_lockout",  label: "gate login",         reqs: ["R1"] },
+    { source: "login",          target: "record_success", label: "missing call (R2)",  reqs: ["R2"], missing: true },
+    { source: "record_failure", target: "failures",       label: "append stamp",       reqs: ["R1"] },
+    { source: "check_lockout",  target: "failures",       label: "read 15-min window", reqs: ["R1"] },
+    { source: "record_success", target: "failures",       label: "clear (R2)",         reqs: ["R2"] },
+    { source: "check_lockout",  target: "emit_event_dup", label: "on lock (R4)",       reqs: ["R4"] },
+  ],
+};
+
+function renderFlow() {
+  const NW = 185, NH = 50, XGAP = 185, YGAP = 44, M = 26, PORT = 15;
+  const KIND = { new: "#1a7f37", modified: "#9a6700", store: "#1a7f37" };
+  const KTAG = { new: "NEW", modified: "MOD", store: "STORE" };
+
+  /* 1. canonicalize: one node per (file, symbol); re-point + dedupe edges */
+  const canon = new Map(), alias = {}, nodes = [];
+  for (const n of review.flow.nodes) {
+    const key = (n.file || "") + "|" + n.label;
+    if (canon.has(key)) { alias[n.id] = canon.get(key).id; continue; }
+    canon.set(key, n); nodes.push(n);
+  }
+  const byId = {}; nodes.forEach(n => byId[n.id] = n);
+  const seenE = new Set();
+  const edges = review.flow.edges
+    .map(e => ({ ...e, source: alias[e.source] || e.source, target: alias[e.target] || e.target }))
+    .filter(e => byId[e.source] && byId[e.target])
+    .filter(e => { const k = e.source + ">" + e.target + ">" + e.label;
+      if (seenE.has(k)) return false; seenE.add(k); return true; });
+
+  /* 2. layering: longest path from entry points (left to right) */
+  const preds = {}; nodes.forEach(n => preds[n.id] = []);
+  edges.forEach(e => preds[e.target].push(e.source));
+  const L = {};
+  const layerOf = id => { if (L[id] != null) return L[id]; L[id] = 0;
+    L[id] = preds[id].length ? Math.max(...preds[id].map(layerOf)) + 1 : 0; return L[id]; };
+  nodes.forEach(n => layerOf(n.id));
+  const maxL = Math.max(...nodes.map(n => L[n.id]));
+  nodes.forEach(n => { if (n.kind === "ghost") L[n.id] = maxL; });
+
+  /* 3. order within a column by barycenter of predecessors (ghosts sink) */
+  const layers = Array.from({ length: maxL + 1 }, () => []);
+  nodes.forEach(n => layers[L[n.id]].push(n));
+  layers.forEach((col, li) => {
+    if (li > 0) {
+      col.forEach(n => { const ps = preds[n.id].map(p => byId[p]._ord).filter(v => v != null);
+        n._b = n.kind === "ghost" ? 1e9 : ps.length ? ps.reduce((a, c) => a + c, 0) / ps.length : 1e8; });
+      col.sort((a, b) => a._b - b._b);
+    }
+    col.forEach((n, i) => n._ord = i);
+  });
+
+  /* 4. coordinates — columns centered vertically */
+  const rows = Math.max(...layers.map(c => c.length));
+  const H = M * 2 + rows * NH + (rows - 1) * YGAP;
+  const W = M * 2 + (maxL + 1) * NW + maxL * XGAP;
+  layers.forEach((col, li) => { const colH = col.length * NH + (col.length - 1) * YGAP;
+    col.forEach(n => { n.x = M + li * (NW + XGAP); n.y = (H - colH) / 2 + n._ord * (NH + YGAP); }); });
+
+  /* 5. ports — spread edge endpoints along node sides, sorted by far-end y,
+        so no two edges share a start or end point */
+  const outE = {}, inE = {};
+  nodes.forEach(n => { outE[n.id] = []; inE[n.id] = []; });
+  edges.forEach(e => { outE[e.source].push(e); inE[e.target].push(e); });
+  const cy = n => n.y + NH / 2;
+  Object.values(outE).forEach(l => l.sort((a, b) => cy(byId[a.target]) - cy(byId[b.target])));
+  Object.values(inE).forEach(l => l.sort((a, b) => cy(byId[a.source]) - cy(byId[b.source])));
+  edges.forEach(e => {
+    const o = outE[e.source]; e._sy = cy(byId[e.source]) + (o.indexOf(e) - (o.length - 1) / 2) * PORT;
+    const t = inE[e.target];  e._ty = cy(byId[e.target]) + (t.indexOf(e) - (t.length - 1) / 2) * PORT;
+  });
+
+  /* 6. requirement dots per node (own tags + non-missing edges) */
+  const dots = {}; nodes.forEach(n => dots[n.id] = new Set(n.tags || []));
+  edges.forEach(e => { if (!e.missing) e.reqs.forEach(r => { dots[e.source].add(r); dots[e.target].add(r); }); });
+
+  /* 7. geometry helpers */
+  const bez = (e, t) => {
+    const s = byId[e.source], tt = byId[e.target];
+    const x0 = s.x + NW, y0 = e._sy, x3 = tt.x, y3 = e._ty;
+    const g = (x3 - x0) * 0.45, u = 1 - t;
+    const x1 = x0 + g, y1 = y0, x2 = x3 - g, y2 = y3;
+    return { x: u*u*u*x0 + 3*u*u*t*x1 + 3*u*t*t*x2 + t*t*t*x3,
+             y: u*u*u*y0 + 3*u*u*t*y1 + 3*u*t*t*y2 + t*t*t*y3 };
+  };
+  const hits = (a, b, pad) => a.x < b.x + b.w + pad && b.x < a.x + a.w + pad &&
+                              a.y < b.y + b.h + pad && b.y < a.y + a.h + pad;
+
+  /* 8. draw edges (white casing so crossings read as bridges), then nodes */
+  const colorOf = e => e.missing ? REQ_COLORS.U1 : (REQ_COLORS[e.reqs[0]] || "#59636e");
+  const colors = [...new Set(edges.map(colorOf))];
+  const defs = colors.map((c, i) =>
+    `<marker id="fa${i}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="${c}"/></marker>`).join("");
+  const pathD = e => { const sx = byId[e.source].x + NW, tx = byId[e.target].x, g = (tx - sx) * 0.45;
+    return `M${sx},${e._sy} C${sx + g},${e._sy} ${tx - g},${e._ty} ${tx},${e._ty}`; };
+  let body = "";
+  edges.forEach(e => body += `<path class="fedge-casing" d="${pathD(e)}"/>`);
+  edges.forEach(e => {
+    const clickable = e.missing ? `data-card="${e.reqs[0]}" style="cursor:pointer"` : "";
+    body += `<path class="fedge${e.missing ? " missing" : ""}" ${clickable} d="${pathD(e)}" stroke="${colorOf(e)}" marker-end="url(#fa${colors.indexOf(colorOf(e))})"/>`;
+  });
+  nodes.forEach(n => {
+    if (n.kind === "ghost") {
+      body += `<g class="fnode ghost" data-card="${n.card}"><rect class="body" x="${n.x}" y="${n.y}" width="${NW}" height="${NH}"/><text class="name" x="${n.x + 13}" y="${n.y + 21}">${n.label}</text><text class="loc" x="${n.x + 13}" y="${n.y + 38}">${n.sub}</text></g>`;
+      return;
+    }
+    const dotSvg = [...dots[n.id]].sort().map((r2, i) =>
+      `<circle cx="${n.x + NW - 12 - i * 13}" cy="${n.y + 11}" r="5" fill="${REQ_COLORS[r2]}"><title>${r2}: ${REQ_TEXT[r2] || ""}</title></circle>`).join("");
+    body += `<g class="fnode" data-anchors='${JSON.stringify(n.anchors)}'>` +
+      `<rect class="body" x="${n.x}" y="${n.y}" width="${NW}" height="${NH}"/>` +
+      `<rect x="${n.x}" y="${n.y}" width="4" height="${NH}" fill="${KIND[n.kind]}"/>` +
+      `<text class="name" x="${n.x + 13}" y="${n.y + 21}">${n.label}</text>` +
+      `<text class="loc" x="${n.x + 13}" y="${n.y + 38}">${n.file}:${n.line}</text>` +
+      `<text class="kindtag" text-anchor="end" x="${n.x + NW - 8}" y="${n.y + 44}" fill="${KIND[n.kind]}">${KTAG[n.kind]}</text>` +
+      dotSvg + `</g>`;
+  });
+  body += `<g class="flow-labels"></g>`;
+  document.getElementById("flow-svg-wrap").innerHTML =
+    `<svg viewBox="0 0 ${W} ${H}" width="100%" style="min-width:${Math.round(W * 0.9)}px" xmlns="http://www.w3.org/2000/svg"><defs>${defs}</defs>${body}</svg>`;
+
+  /* 9. labels — real measured widths (getBBox), placed by search that must
+        clear every node, every placed label, and EVERY edge path */
+  const svg = document.querySelector("#flow-svg-wrap svg");
+  const labelsG = svg.querySelector(".flow-labels");
+  const SVGNS = "http://www.w3.org/2000/svg";
+  const samples = edges.map(e => Array.from({ length: 41 }, (_, i) => bez(e, i / 40)));
+  const nodeRects = nodes.map(n => ({ x: n.x, y: n.y, w: NW, h: NH }));
+  const placed = [];
+  const isClear = r => {
+    if (nodeRects.some(nr => hits(r, nr, 4))) return false;
+    if (placed.some(o => hits(o, r, 5))) return false;
+    for (const pts of samples)
+      for (const p of pts)
+        if (p.x > r.x - 3 && p.x < r.x + r.w + 3 && p.y > r.y - 3 && p.y < r.y + r.h + 3) return false;
+    return true;
+  };
+  edges.forEach(e => {
+    const c = colorOf(e);
+    const g = document.createElementNS(SVGNS, "g");
+    g.setAttribute("class", "elabel-g");
+    if (e.missing) { g.setAttribute("data-card", e.reqs[0]); g.style.cursor = "pointer"; }
+    const text = document.createElementNS(SVGNS, "text");
+    text.setAttribute("class", "elabel"); text.setAttribute("fill", c);
+    text.textContent = (e.missing ? "✕ " : "") + e.label;
+    g.appendChild(text); labelsG.appendChild(g);
+    const w = text.getBBox().width + 12, h = 16;
+    let best = null;
+    outer:
+    for (const dy of [-24, 10, -40, 26, -56, 42]) {
+      for (const t of [0.5, 0.42, 0.58, 0.34, 0.66, 0.26, 0.74, 0.18, 0.82]) {
+        const p = bez(e, t);
+        const r = { x: p.x - w / 2, y: p.y + dy, w, h };
+        if (r.x < 4 || r.x + w > W - 4 || r.y < 2 || r.y + h > H - 2) continue;
+        if (isClear(r)) { best = r; break outer; }
+      }
+    }
+    if (!best) { const p = bez(e, 0.5); best = { x: p.x - w / 2, y: p.y - 24, w, h }; }
+    placed.push(best);
+    const rect = document.createElementNS(SVGNS, "rect");
+    rect.setAttribute("class", "elabel-bg"); rect.setAttribute("rx", "3");
+    rect.setAttribute("x", best.x); rect.setAttribute("y", best.y);
+    rect.setAttribute("width", w); rect.setAttribute("height", h);
+    g.insertBefore(rect, text);
+    text.setAttribute("x", best.x + 6); text.setAttribute("y", best.y + 12);
+  });
+}
+
+/* ============================================================
+   Interactions
+   ============================================================ */
+function clearHl() {
+  document.querySelectorAll("tr.hl").forEach(el => el.classList.remove("hl"));
+  document.querySelectorAll(".card.active").forEach(el => el.classList.remove("active"));
+}
+function highlightAnchors(anchors, scroll = true) {
+  let first = null;
+  for (const a of anchors) {
+    for (let ln = a.start; ln <= a.end; ln++) {
+      const tr = document.querySelector(`tr[data-file="${a.file}"][data-line="${ln}"]`);
+      if (tr) { tr.classList.add("hl"); if (!first) first = tr; }
+    }
+  }
+  if (scroll && first) first.scrollIntoView({ behavior: "smooth", block: "center" });
+}
+function activateCard(cardId, scroll = true) {
+  clearHl();
+  const card = document.getElementById("card-" + cardId);
+  if (!card) return;
+  card.classList.add("active");
+  const link = review.links.find(l => l.requirement_id === cardId) || review.unexplained.find(u => u.id === cardId);
+  if (link) highlightAnchors(link.anchors, scroll);
+}
+
+document.addEventListener("click", e => {
+  const nav = e.target.closest("[data-nav]");
+  if (nav) { show(nav.dataset.nav); return; }
+
+  const filter = e.target.closest(".filter");
+  if (filter) {
+    document.querySelectorAll(".filter").forEach(f => f.classList.remove("active"));
+    filter.classList.add("active");
+    const mode = filter.dataset.filter;
+    document.querySelectorAll(".pr-row").forEach(row => {
+      row.style.display = (mode === "all" || row.dataset.role === mode) ? "" : "none";
+    });
+    document.querySelectorAll(".repo-group").forEach(g => {
+      const anyVisible = [...g.querySelectorAll(".pr-row")].some(r => r.style.display !== "none");
+      g.style.display = anyVisible ? "" : "none";
+    });
+    return;
+  }
+
+  const prRow = e.target.closest(".pr-row");
+  if (prRow) { show("review"); return; }   // mockup: every PR opens the sample review
+
+  const verifyBtn = e.target.closest(".verify-btn");
+  if (verifyBtn) {
+    const card = verifyBtn.closest(".card");
+    card.classList.toggle("verified");
+    verifyBtn.textContent = card.classList.contains("verified") ? "✓ Verified" : "Mark verified";
+    document.getElementById("verified-count").textContent =
+      document.querySelectorAll(".card.verified").length;
+    e.stopPropagation();
+    return;
+  }
+  const fnode = e.target.closest(".fnode, .fedge, .elabel-g");
+  if (fnode) {
+    if (fnode.dataset.card) {
+      activateCard(fnode.dataset.card, false);
+      document.getElementById("card-" + fnode.dataset.card).scrollIntoView({ behavior: "smooth", block: "center" });
+    } else if (fnode.dataset.anchors) {
+      clearHl();
+      highlightAnchors(JSON.parse(fnode.dataset.anchors));
+    }
+    return;
+  }
+  const rtag = e.target.closest(".rtag");
+  if (rtag) {
+    activateCard(rtag.dataset.card, false);
+    document.getElementById("card-" + rtag.dataset.card).scrollIntoView({ behavior: "smooth", block: "center" });
+    e.stopPropagation();
+    return;
+  }
+  const anchor = e.target.closest(".anchor");
+  if (anchor) {
+    clearHl();
+    anchor.closest(".card").classList.add("active");
+    highlightAnchors([{ file: anchor.dataset.file, start: +anchor.dataset.start, end: +anchor.dataset.end }]);
+    e.stopPropagation();
+    return;
+  }
+  const chip = e.target.closest(".chip, .lg-item");
+  if (chip) {
+    activateCard(chip.dataset.card, false);
+    document.getElementById("card-" + chip.dataset.card).scrollIntoView({ behavior: "smooth", block: "center" });
+    return;
+  }
+  const card = e.target.closest(".card");
+  if (card) activateCard(card.dataset.cardId);
+});
+
+show("command-center");
+</script>
+</body>
+</html>

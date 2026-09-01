@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "pr-reviewer",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": ["-c", "uv run uvicorn pr_reviewer.app:app --host 127.0.0.1 --port ${PORT:-8712}"],
+      "port": 8712,
+      "autoPort": true
+    }
+  ]
+}
