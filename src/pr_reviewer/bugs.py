@@ -7,6 +7,9 @@ parsed hunks, used when the skill path errors (skill missing, no gh, etc.).
 """
 from __future__ import annotations
 
+import asyncio
+import re
+from pathlib import Path
 from typing import Any, Callable
 
 from .llm.base import LLMBackend, LLMError
@@ -83,6 +86,74 @@ SKILL_TOOLS = [
     "Bash(git log *)", "Bash(git show *)", "Bash(git diff *)",
 ]
 
+DEFAULT_SKILLS_DIR = Path.home() / ".claude" / "skills"
+
+
+def _skills_root(skills_dir: str = "") -> Path:
+    return Path(skills_dir).expanduser() if skills_dir.strip() else DEFAULT_SKILLS_DIR
+
+
+def _parse_frontmatter(text: str) -> dict[str, Any]:
+    """Minimal YAML-frontmatter reader: scalar `key: value` lines plus
+    string-list blocks (`key:` followed by `- item` lines). No yaml dep."""
+    lines = text.splitlines()
+    if not lines or lines[0].strip() != "---":
+        return {}
+    out: dict[str, Any] = {}
+    key: str | None = None
+    for line in lines[1:]:
+        if line.strip() == "---":
+            break
+        item = re.match(r"\s+-\s+(.+)", line)
+        if item and key is not None:
+            out.setdefault(key, [])
+            if isinstance(out[key], list):
+                out[key].append(item.group(1).strip().strip("\"'"))
+            continue
+        kv = re.match(r"([A-Za-z][\w-]*):\s*(.*)", line)
+        if kv:
+            key, val = kv.group(1), kv.group(2).strip().strip("\"'")
+            if val:
+                out[key] = val
+                key = None  # scalar — don't attach stray list items
+            else:
+                out[key] = []  # opening a block list
+    return out
+
+
+def list_skills(skills_dir: str = "") -> list[dict[str, Any]]:
+    """Discover user skills at runtime: every <root>/<name>/SKILL.md."""
+    root = _skills_root(skills_dir)
+    skills: list[dict[str, Any]] = []
+    if not root.is_dir():
+        return skills
+    for md in sorted(root.glob("*/SKILL.md")):
+        try:
+            fm = _parse_frontmatter(md.read_text(errors="replace"))
+        except OSError:
+            continue
+        name = str(fm.get("name") or md.parent.name)
+        tools = fm.get("allowed-tools")
+        skills.append({
+            "name": name,
+            "description": str(fm.get("description") or ""),
+            "tools": tools if isinstance(tools, list) else [],
+        })
+    return skills
+
+
+def resolve_review_skill(skill: str, skills_dir: str = "") -> tuple[str, list[str]] | None:
+    """→ (prompt, allowed_tools) for a discovered skill, or None if unknown.
+
+    Only names found on disk are accepted — the value arrives over HTTP and is
+    interpolated into the CLI prompt, so it must never be free text. Tools come
+    from the skill's own frontmatter, falling back to the tight built-in set.
+    """
+    for s in list_skills(skills_dir):
+        if s["name"] == skill:
+            return f"/{s['name']} {{url}}", (s["tools"] or SKILL_TOOLS)
+    return None
+
 
 def attach_findings(findings_raw: list[dict[str, Any]], hunks: list[Hunk]) -> list[BugFinding]:
     """Anchor findings to diff lines where possible; keep un-anchorable ones
@@ -120,21 +191,61 @@ def attach_findings(findings_raw: list[dict[str, Any]], hunks: list[Hunk]) -> li
     return out
 
 
+async def collect_findings_raw(
+    pr_url: str,
+    backend: LLMBackend,
+    progress: Callable[[str, str], None] = lambda s, d: None,
+    skill: str = "",
+    skills_dir: str = "",
+) -> tuple[dict[str, Any], str]:
+    """URL-only phase: run the review skill on the PR and structure its report.
+
+    Needs no parsed hunks, so the main pipeline can start this concurrently
+    before the diff is even fetched. Raises LLMError when the skill path fails;
+    the caller decides whether to fall back to a direct diff review."""
+    prompt, tools = SKILL_PROMPT, SKILL_TOOLS
+    label = "/code-review"
+    if skill:
+        resolved = resolve_review_skill(skill, skills_dir)
+        if resolved:
+            prompt, tools = resolved
+            label = f"/{skill}"
+    progress("findings", f"Running Claude Code {label} on the PR")
+    report = await backend.text(prompt.format(url=pr_url), allowed_tools=tools)
+    progress("findings", "Structuring the review report")
+    raw = await backend.structured(STRUCTURE_PROMPT.format(report=report), BUGS_SCHEMA)
+    return raw, report
+
+
 async def run_code_review(
     review: Review,
     backend: LLMBackend,
     progress: Callable[[str, str], None] = lambda s, d: None,
+    skill: str = "",
+    skills_dir: str = "",
+    precollected: "asyncio.Task[tuple[dict[str, Any], str]] | None" = None,
 ) -> tuple[list[BugFinding], str, int]:
     """→ (findings, raw report text, findings dropped beyond the cap).
-    The raw report is preserved verbatim — the table is a compression of it."""
+    The raw report is preserved verbatim — the table is a compression of it.
+
+    skill: name of a user skill (discovered from skills_dir) to run instead of
+    the built-in /code-review flow; "" or an unknown name uses the built-in.
+    precollected: an already-running collect_findings_raw task (started by the
+    main review pipeline so both run concurrently); its failure falls back to
+    the direct diff review exactly like an inline skill failure."""
     raw: dict[str, Any] | None = None
     report = ""
-    if review.pr.url:
-        progress("code-review", "Running Claude Code /code-review on the PR")
+    if precollected is not None:
         try:
-            report = await backend.text(SKILL_PROMPT.format(url=review.pr.url), allowed_tools=SKILL_TOOLS)
-            progress("code-review", "Structuring the review report")
-            raw = await backend.structured(STRUCTURE_PROMPT.format(report=report), BUGS_SCHEMA)
+            raw, report = await precollected
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            raw, report = None, ""
+    elif review.pr.url:
+        try:
+            raw, report = await collect_findings_raw(
+                review.pr.url, backend, progress, skill=skill, skills_dir=skills_dir)
         except LLMError:
             raw = None
             report = ""

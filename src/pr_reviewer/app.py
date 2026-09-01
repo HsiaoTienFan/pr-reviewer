@@ -110,6 +110,21 @@ async def put_settings(section: str, body: SettingsUpdate) -> dict[str, Any]:
     return _masked(config.load_config())
 
 
+@app.get("/api/skills")
+async def get_skills() -> dict[str, Any]:
+    """User review skills, discovered from disk at request time — never cached,
+    never hardcoded. `selected` = "" means the built-in /code-review flow."""
+    from .bugs import _skills_root, list_skills
+
+    ccfg = config.load_config().get("claude", {})
+    skills_dir = ccfg.get("skills_dir", "")
+    return {
+        "dir": str(_skills_root(skills_dir)),
+        "selected": ccfg.get("review_skill", ""),
+        "skills": list_skills(skills_dir),
+    }
+
+
 @app.post("/api/settings/{section}/test")
 async def test_connection(section: str) -> dict[str, Any]:
     cfg = config.load_config()
@@ -358,8 +373,18 @@ async def start_review(body: ReviewRequest) -> dict[str, Any]:
     prev = config.load_review(rid) if body.force else None
 
     async def run() -> None:
+        from .bugs import collect_findings_raw, run_code_review
+        from .llm.base import LLMError
         from .pipeline import merge_rerun_state
 
+        claude_cfg = cfg.get("claude", {})
+        # Findings are part of every review. The skill run is the slowest stage,
+        # so it starts now — concurrent with extract/map/flow — and joins below.
+        findings_task = asyncio.create_task(collect_findings_raw(
+            provider.pr_url(repo, number), backend,
+            skill=claude_cfg.get("review_skill", ""),
+            skills_dir=claude_cfg.get("skills_dir", ""),
+        ))
         try:
             review = await run_review(
                 provider, repo, number,
@@ -370,12 +395,32 @@ async def start_review(body: ReviewRequest) -> dict[str, Any]:
             if prev is not None:
                 progress("save", "Carrying over verified/reviewer state")
                 await merge_rerun_state(review, prev, backend, progress)
+            progress("findings", "Collecting code-review findings")
+            try:
+                findings, report, dropped = await run_code_review(
+                    review, backend, progress, precollected=findings_task)
+            except LLMError as e:
+                # the review itself succeeded — surface the miss, don't fail the job
+                progress("done", f"Review complete (findings failed: {e} — use ↻ Findings to retry)")
+            else:
+                async with _review_lock(rid):
+                    latest = config.load_review(rid) or review
+                    latest.bugs = findings
+                    latest.bugs_ran = True
+                    latest.bugs_stale = False
+                    latest.bugs_report = report
+                    if dropped:
+                        latest.overflow = {**latest.overflow, "findings": dropped}
+                    config.save_review(latest)
+                progress("done", "Review complete")
         except asyncio.CancelledError:
             job["error"] = "Cancelled"
             raise
         except Exception as e:  # surfaced to the UI, not swallowed
             job["error"] = f"{type(e).__name__}: {e}"
         finally:
+            if not findings_task.done():
+                findings_task.cancel()
             job["done"] = True
             RUNNING.pop(rid, None)
             TASKS.pop(job_id, None)
@@ -592,7 +637,12 @@ async def start_code_review(rid: str) -> dict[str, Any]:
 
     async def run() -> None:
         try:
-            findings, report, dropped = await run_code_review(review, backend, progress)
+            claude_cfg = cfg.get("claude", {})
+            findings, report, dropped = await run_code_review(
+                review, backend, progress,
+                skill=claude_cfg.get("review_skill", ""),
+                skills_dir=claude_cfg.get("skills_dir", ""),
+            )
             async with _review_lock(rid):
                 # reload: a re-run may have replaced the review while we worked
                 latest = config.load_review(rid) or review

@@ -408,3 +408,64 @@ def test_generated_files_never_reach_the_llm():
     # the surviving 900k hunk is not generated, so the clamp is what saves us
     for chunk in _chunk_hunks(keep):
         assert len(_hunks_block(chunk)) < MAP_CHUNK_CHARS
+
+
+def test_pr_url_constructible_without_api():
+    """The integrated findings task starts before fetch, so the canonical PR
+    URL must be constructible from repo+number alone."""
+    from pr_reviewer.providers.bitbucket import BitbucketProvider
+    from pr_reviewer.providers.github import GitHubProvider
+
+    assert GitHubProvider().pr_url("o/r", 5) == "https://github.com/o/r/pull/5"
+    assert BitbucketProvider().pr_url("w/r", 7) == "https://bitbucket.org/w/r/pull-requests/7"
+
+
+async def test_run_code_review_precollected_failure_falls_back():
+    """When the concurrently-started skill task dies, the integrated flow must
+    fall back to the direct diff review — and must NOT re-run the skill."""
+    import asyncio
+
+    from pr_reviewer.bugs import run_code_review
+    from pr_reviewer.models import PRInfo, Review
+
+    class FakeBackend:
+        async def text(self, prompt, allowed_tools=None):
+            raise AssertionError("skill path must not be re-run after precollected failure")
+
+        async def structured(self, prompt, schema, allowed_tools=None):
+            return {"findings": [{"severity": "nit", "category": "style", "file": "a.py",
+                                  "start": 1, "end": 1, "title": "t", "detail": "d"}]}
+
+    async def dead_skill():
+        raise RuntimeError("skill blew up")
+
+    review = Review(
+        id="github:x/y:1",
+        pr=PRInfo(provider="github", repo="x/y", number=1,
+                  url="https://github.com/x/y/pull/1", title="t"),
+        mode="requirements",
+        hunks=[],
+    )
+    findings, report, dropped = await run_code_review(
+        review, FakeBackend(), precollected=asyncio.create_task(dead_skill()))
+    assert [f.severity for f in findings] == ["nit"]
+    assert report == "" and dropped == 0
+
+
+def test_skill_frontmatter_discovery(tmp_path):
+    """Skills are discovered from disk at call time — never hardcoded."""
+    from pr_reviewer.bugs import list_skills, resolve_review_skill
+
+    d = tmp_path / "my-review"
+    d.mkdir()
+    (d / "SKILL.md").write_text(
+        "---\nname: my-review\ndescription: House review rules\n"
+        "allowed-tools:\n  - Read\n  - Bash(gh pr diff *)\n---\nbody\n")
+    skills = list_skills(str(tmp_path))
+    assert [s["name"] for s in skills] == ["my-review"]
+    assert skills[0]["tools"] == ["Read", "Bash(gh pr diff *)"]
+
+    resolved = resolve_review_skill("my-review", str(tmp_path))
+    assert resolved == ("/my-review {url}", ["Read", "Bash(gh pr diff *)"])
+    # unknown names are rejected — the value reaches the CLI prompt
+    assert resolve_review_skill("../evil", str(tmp_path)) is None

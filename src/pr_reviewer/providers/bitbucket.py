@@ -22,6 +22,9 @@ class BitbucketProvider:
     def matches(self, url: str) -> bool:
         return "bitbucket.org/" in url
 
+    def pr_url(self, repo: str, number: int) -> str:
+        return f"https://bitbucket.org/{repo}/pull-requests/{number}"
+
     def parse_url(self, url: str) -> tuple[str, int] | None:
         m = _URL_RE.search(url)
         return (m.group(1), int(m.group(2))) if m else None

@@ -55,6 +55,9 @@ class GitHubProvider:
     def matches(self, url: str) -> bool:
         return "github.com/" in url
 
+    def pr_url(self, repo: str, number: int) -> str:
+        return f"https://github.com/{repo}/pull/{number}"
+
     def parse_url(self, url: str) -> tuple[str, int] | None:
         m = _URL_RE.search(url)
         return (m.group(1), int(m.group(2))) if m else None

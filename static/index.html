@@ -269,6 +269,13 @@
   .sum-net ul { margin: 4px 0 0; padding-left: 18px; }
   .sum-section { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 16px 2px 6px; }
 
+  /* inline code inside LLM-written card text (md() renderer) */
+  code.mdc {
+    font-family: var(--mono); font-size: .92em; padding: 0 4px; border-radius: 4px;
+    background: #eff2f5; border: 1px solid var(--border); white-space: nowrap;
+  }
+  .mechanism code.mdc, .why-note code.mdc { white-space: normal; }
+
   /* ---- Findings tab ---- */
   .empty-tab { text-align: center; padding: 54px 30px; color: var(--muted); }
   .empty-tab h3 { margin: 0 0 8px; font-size: 15px; color: var(--text); }
@@ -351,6 +358,24 @@
   .fnd-loc i { font-style: normal; color: var(--muted); }
   .fnd-loc.none { color: var(--muted); }
   .fnd-none { padding: 26px; text-align: center; color: var(--muted); font-size: 12.5px; }
+
+  /* full /code-review report, rendered as markdown */
+  .fnd-report { margin-top: 18px; }
+  .md-report {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+    padding: 14px 18px; font-size: 13px; line-height: 1.65;
+  }
+  .md-report p { margin: 8px 0; }
+  .md-report ul, .md-report ol { margin: 8px 0; padding-left: 22px; }
+  .md-report li { margin: 6px 0; }
+  .md-h { font-weight: 700; margin: 14px 0 6px; }
+  .md-h1 { font-size: 15px; } .md-h2 { font-size: 14px; }
+  .md-h3 { font-size: 13.5px; } .md-h4 { font-size: 13px; color: var(--muted); }
+  .md-report .md-h:first-child { margin-top: 2px; }
+  pre.md-code {
+    background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+    padding: 10px 12px; font: 12px/1.55 var(--mono); overflow-x: auto; margin: 8px 0;
+  }
   table.sum {
     width: 100%; border-collapse: collapse; background: var(--panel);
     border: 1px solid var(--border); border-radius: 8px; overflow: hidden; font-size: 12.5px;

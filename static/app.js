@@ -3,6 +3,51 @@
 
 const $ = (sel) => document.querySelector(sel);
 const esc = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+// Inline markdown for LLM-written card text: escape FIRST (the text derives from
+// attacker-controlled PR content), then allow only `code` and **bold** through.
+const md = (s) => esc(s)
+  .replace(/`([^`\n]+)`/g, "<code class=\"mdc\">$1</code>")
+  .replace(/\*\*([^*\n]+)\*\*/g, "<b>$1</b>");
+
+// Block-level markdown for the /code-review report: headings, fenced code,
+// bullet/numbered lists, paragraphs. Same safety model as md() — escape first,
+// build markup only from our own transforms. No raw HTML, no links.
+function mdBlock(src) {
+  const lines = String(src ?? "").split("\n");
+  const out = [];
+  let i = 0, para = [], list = null;
+  const flushPara = () => { if (para.length) { out.push(`<p>${md(para.join(" "))}</p>`); para = []; } };
+  const flushList = () => {
+    if (!list) return;
+    const tag = list.ol ? "ol" : "ul";
+    out.push(`<${tag}>${list.items.map((it) => `<li>${md(it)}</li>`).join("")}</${tag}>`);
+    list = null;
+  };
+  while (i < lines.length) {
+    const l = lines[i];
+    if (/^```/.test(l)) {
+      flushPara(); flushList();
+      const buf = []; i++;
+      while (i < lines.length && !/^```/.test(lines[i])) buf.push(lines[i++]);
+      i++;
+      out.push(`<pre class="md-code">${esc(buf.join("\n"))}</pre>`);
+      continue;
+    }
+    const h = l.match(/^(#{1,4})\s+(.*)$/);
+    if (h) { flushPara(); flushList(); out.push(`<div class="md-h md-h${h[1].length}">${md(h[2])}</div>`); i++; continue; }
+    const ul = l.match(/^\s*[-*]\s+(.*)$/);
+    if (ul) { flushPara(); if (list?.ol) flushList(); (list ??= { ol: false, items: [] }).items.push(ul[1]); i++; continue; }
+    const ol = l.match(/^\s*\d+[.)]\s+(.*)$/);
+    if (ol) { flushPara(); if (list && !list.ol) flushList(); (list ??= { ol: true, items: [] }).items.push(ol[1]); i++; continue; }
+    if (!l.trim()) { flushPara(); flushList(); i++; continue; }
+    if (list && /^\s{2,}/.test(l)) { list.items[list.items.length - 1] += " " + l.trim(); i++; continue; }
+    flushList(); para.push(l.trim()); i++;
+  }
+  flushPara(); flushList();
+  return `<div class="md-report">${out.join("")}</div>`;
+}
+// The report cites files by sandbox-absolute path; show repo-relative instead.
+const cleanReport = (t) => String(t ?? "").replace(/\/[^\s`)]*\/\.pr-reviewer\/sandbox\/(?:repo\/)?/g, "");
 
 const state = {
   settings: null,      // masked config
@@ -335,6 +380,7 @@ const STAGES = [
   ["map", "Map requirements → changes (LLM)"],
   ["validate", "Validate anchors"],
   ["save", "Save review"],
+  ["findings", "Code-review findings"],
 ];
 
 function renderStages(current, done, hasError) {
@@ -860,16 +906,22 @@ function findingsTabHtml(r) {
 
   if (!r.bugs_ran) {
     return `<div class="empty-tab">
-      <h3>No code review has been run yet</h3>
-      <p>Run <b>▶ Code review</b> from the toolbar to have Claude inspect this PR for
-      defects. Findings land here grouped by severity, with a category for each item.</p>
+      <h3>No findings for this review</h3>
+      <p>Findings now run automatically as part of every review. This review predates
+      that (or its findings pass failed) — hit <b>↻ Findings</b> in the toolbar, or
+      ↻ Re-run the whole review.</p>
     </div>`;
   }
+  const reportHtml = r.bugs_report
+    ? `<div class="fnd-report"><div class="sum-section">Full report — /code-review output (the table is a compression of this)</div>
+       ${mdBlock(cleanReport(r.bugs_report))}</div>`
+    : "";
+
   if (!bugs.length) {
     return `<div class="empty-tab">
       <h3>No findings</h3>
       <p>The code review pass completed and reported nothing worth flagging.</p>
-    </div>`;
+    </div>${reportHtml}`;
   }
 
   const sevCounts = {}, catCounts = {};
@@ -914,9 +966,9 @@ function findingsTabHtml(r) {
         <td class="fnd-id"><span class="fnd-badge" style="background:${SEV_COLORS[sev]}">${esc(b.id)}</span></td>
         <td class="fnd-cat"><span class="fnd-cat-tag c-${cat}">${esc(CAT_LABEL[cat])}</span></td>
         <td class="fnd-what">
-          <div class="fnd-title">${esc(b.title)}</div>
-          ${b.detail ? `<div class="fnd-detail">${esc(b.detail)}</div>` : ""}
-          ${b.suggestion ? `<div class="fnd-fix"><b>Fix</b> ${esc(b.suggestion)}</div>` : ""}
+          <div class="fnd-title">${md(b.title)}</div>
+          ${b.detail ? `<div class="fnd-detail">${md(b.detail)}</div>` : ""}
+          ${b.suggestion ? `<div class="fnd-fix"><b>Fix</b> ${md(b.suggestion)}</div>` : ""}
         </td>
         <td class="fnd-where">${loc}</td>
       </tr>`;
@@ -931,7 +983,8 @@ function findingsTabHtml(r) {
       <thead><tr><th></th><th>Category</th><th>Finding</th><th>Where</th></tr></thead>
       <tbody>${rows}</tbody>
     </table>
-    <div class="fnd-none" style="display:none">No findings in this category.</div>`;
+    <div class="fnd-none" style="display:none">No findings in this category.</div>
+    ${reportHtml}`;
 }
 
 /* ---- Summary tab: the whole review as a scannable grid ---- */
@@ -956,7 +1009,7 @@ function summaryTabHtml(r) {
 
   let html = `<div class="sum-wrap">`;
   if (r.net_effect.length) {
-    html += `<div class="sum-net"><b>Net effect</b><ul>${r.net_effect.map((l) => `<li>${esc(l)}</li>`).join("")}</ul>${overflowNote(r, "net_effect", "net-effect lines")}</div>`;
+    html += `<div class="sum-net"><b>Net effect</b><ul>${r.net_effect.map((l) => `<li>${md(l)}</li>`).join("")}</ul>${overflowNote(r, "net_effect", "net-effect lines")}</div>`;
   }
 
   if (!isExplain && r.requirements.length) {
@@ -969,13 +1022,13 @@ function summaryTabHtml(r) {
       const link = r.links.find((l) => l.requirement_id === req.id) || { status: "notfound", confidence: "low", anchors: [], mechanism: "", missing: "" };
       const [label, color] = glyph[link.status];
       const how = link.status === "fulfilled"
-        ? esc(link.mechanism)
-        : `${link.mechanism ? esc(link.mechanism) + " " : ""}<span class="sum-missing ${link.status === "notfound" ? "red" : ""}">${esc(link.missing)}</span>`;
+        ? md(link.mechanism)
+        : `${link.mechanism ? md(link.mechanism) + " " : ""}<span class="sum-missing ${link.status === "notfound" ? "red" : ""}">${md(link.missing)}</span>`;
       html += `<tr data-goto-card="${req.id}">
         <td class="sum-fit"><input type="checkbox" class="sum-check" data-verify-card="${req.id}" ${verified.has(req.id) ? "checked" : ""}></td>
         <td class="sum-fit">${ridChip(req.id)}</td>
         <td class="sum-fit sum-status" style="color:${color}">${label}</td>
-        <td>${esc(req.text)}</td>
+        <td>${md(req.text)}</td>
         <td>${how}</td>
         <td>${whereChips(link.anchors)}</td>
         <td class="sum-fit">${confDot(link.confidence)}</td>
@@ -994,7 +1047,7 @@ function summaryTabHtml(r) {
         ${isExplain ? `<td class="sum-fit"><input type="checkbox" class="sum-check" data-verify-card="${u.id}" ${verified.has(u.id) ? "checked" : ""}></td>` : ""}
         <td class="sum-fit">${ridChip(u.id)}</td>
         <td>${esc(u.label)}</td>
-        <td class="sum-muted">${esc(u.mechanism)}</td>
+        <td class="sum-muted">${md(u.mechanism)}</td>
         <td>${whereChips(u.anchors)}</td>
       </tr>`;
     }
@@ -1013,7 +1066,7 @@ function summaryTabHtml(r) {
       for (const b of r.bugs) {
         html += `<tr data-goto-card="${b.id}">
           <td class="sum-fit"><span class="pill ${sevPill[b.severity]}">${b.severity}</span></td>
-          <td><b>${esc(b.title)}</b>${b.detail ? `<div class="sum-muted">${esc(b.detail)}</div>` : ""}</td>
+          <td><b>${md(b.title)}</b>${b.detail ? `<div class="sum-muted">${md(b.detail)}</div>` : ""}</td>
           <td class="sum-muted">${esc(b.suggestion || "—")}</td>
           <td>${whereChips(b.anchors)}</td>
         </tr>`;
@@ -1021,10 +1074,6 @@ function summaryTabHtml(r) {
       html += `</tbody></table>`;
     }
     html += overflowNote(r, "findings", "findings");
-    if (r.bugs_report) {
-      html += `<details class="source-text" style="margin-top:8px"><summary>Full /code-review report — the table above is a compression of this</summary>
-        <pre class="bugs-report">${esc(r.bugs_report)}</pre></details>`;
-    }
   }
 
   if (r.files.length) {
@@ -1201,13 +1250,13 @@ function renderReview() {
             <span class="rid" style="background:${colorFor(req.id)}">${req.id}</span>
             <span class="status-pill ${link.status}">${statusLabel[link.status]}</span>
             <div>
-              <div class="req-text">${esc(req.text)}</div>
+              <div class="req-text">${md(req.text)}</div>
               <div class="src">${srcBadge(req.source)}</div>
             </div>
           </div>
-          ${link.mechanism ? `<div class="mechanism">${esc(link.mechanism)}</div>` : ""}
-          ${link.why ? `<div class="why-note"><span class="why-label">Why</span> ${esc(link.why)}</div>` : ""}
-          ${link.missing ? `<div class="missing-note ${link.status === "notfound" ? "red" : ""}">${esc(link.missing)}</div>` : ""}
+          ${link.mechanism ? `<div class="mechanism">${md(link.mechanism)}</div>` : ""}
+          ${link.why ? `<div class="why-note"><span class="why-label">Why</span> ${md(link.why)}</div>` : ""}
+          ${link.missing ? `<div class="missing-note ${link.status === "notfound" ? "red" : ""}">${md(link.missing)}</div>` : ""}
           ${anchors ? `<div class="anchors">${anchors}</div>` : ""}
           <div class="card-foot">
             <span class="conf ${link.confidence}"><span class="dot"></span>${link.confidence} confidence</span>
@@ -1236,7 +1285,7 @@ function renderReview() {
           <span class="status-pill ${isExplain ? "change" : "unexplained"}">${isExplain ? "◆ Change" : "❓ Unexplained"}</span>
           <div><div class="req-text">${esc(u.label)}</div></div>
         </div>
-        ${u.mechanism ? `<div class="mechanism">${esc(u.mechanism)}</div>` : ""}
+        ${u.mechanism ? `<div class="mechanism">${md(u.mechanism)}</div>` : ""}
         <div class="anchors">${anchors}</div>
         ${isExplain ? `<div class="card-foot"><button class="verify-btn">${verified.has(u.id) ? "✓ Verified" : "Mark verified"}</button></div>` : ""}
       </div>`;
@@ -1248,10 +1297,7 @@ function renderReview() {
   if (r.bugs_ran) {
     railHtml += `<div class="rail-section-label">Code review · ${(r.bugs || []).length}</div>`;
     if (r.bugs_stale) {
-      railHtml += `<div class="missing-note" style="margin:0 2px 8px">⚠ Carried from a previous run — the diff has changed since these findings. Use "↻ Code review" to refresh.</div>`;
-    }
-    if (r.bugs_report) {
-      railHtml += `<details class="source-text" style="margin:0 2px 8px"><summary>Full report</summary><pre class="bugs-report">${esc(r.bugs_report)}</pre></details>`;
+      railHtml += `<div class="missing-note" style="margin:0 2px 8px">⚠ Carried from a previous run — the diff has changed since these findings. Use "↻ Findings" to refresh.</div>`;
     }
     if (!(r.bugs || []).length) {
       railHtml += `<div class="empty-state" style="padding:12px;font-size:12.5px">No findings — clean pass.</div>`;
@@ -1266,8 +1312,8 @@ function renderReview() {
             <span class="pill ${sevPill[b.severity]}" style="margin-top:2px">${sevLabel[b.severity]}</span>
             <div><div class="req-text">${esc(b.title)}</div></div>
           </div>
-          ${b.detail ? `<div class="mechanism">${esc(b.detail)}</div>` : ""}
-          ${b.suggestion ? `<div class="missing-note">Fix: ${esc(b.suggestion)}</div>` : ""}
+          ${b.detail ? `<div class="mechanism">${md(b.detail)}</div>` : ""}
+          ${b.suggestion ? `<div class="missing-note">Fix: ${md(b.suggestion)}</div>` : ""}
           ${anchors ? `<div class="anchors">${anchors}</div>` : ""}
         </div>`;
     }
@@ -1278,7 +1324,7 @@ function renderReview() {
   const verifiedCount = claims.filter((id) => verified.has(id)).length;
   const netEffect = r.net_effect.length
     ? `<div class="net-effect"><span class="ne-label">Net effect</span>
-        <ul>${r.net_effect.map((l) => `<li>${esc(l)}</li>`).join("")}</ul></div>`
+        <ul>${r.net_effect.map((l) => `<li>${md(l)}</li>`).join("")}</ul></div>`
     : "";
 
   $("#review-content").innerHTML = `
@@ -1293,7 +1339,7 @@ function renderReview() {
           <span><b id="verified-count">${verifiedCount}</b>/${claims.length} claims verified</span>
           <button class="btn small" id="rerun-btn">↻ Re-run</button>
           <button class="btn small" id="bugs-btn" ${state.bugsJobs[r.id] ? "disabled" : ""}>${
-            state.bugsJobs[r.id] ? `<span class="spin"></span> Reviewing…` : (r.bugs_ran ? "↻ Code review" : "▶ Code review")
+            state.bugsJobs[r.id] ? `<span class="spin"></span> Findings…` : "↻ Findings"
           }</button>
           ${pr.provider === "github" ? `<button class="btn small" id="publish-btn" title="${r.published_url ? esc("Already posted " + (r.published_at || "").slice(0, 10) + " — click to post again") : "Post this review to the PR on GitHub"}">${r.published_url ? "↗ Published" : "↑ Publish"}</button>` : ""}
           <button class="btn small" id="delete-btn" title="Delete this stored review">🗑</button>
@@ -1620,6 +1666,19 @@ function renderSettings() {
           ${["sonnet", "opus", "haiku"].map((m) => `<option value="${m}" ${m === model ? "selected" : ""}>${m[0].toUpperCase() + m.slice(1)}</option>`).join("")}
         </select>
       </div>
+      <div class="int-body" style="margin-top:8px">
+        <select id="claude-skill" title="Which flow produces the Findings tab" style="max-width:280px">
+          <option value="">/code-review — Claude Code&#39;s review skill (default)</option>
+          ${(state.skills?.skills || []).map((sk) =>
+            `<option value="${esc(sk.name)}" ${sk.name === (state.skills?.selected || "") ? "selected" : ""} title="${esc(sk.description)}">/${esc(sk.name)}</option>`).join("")}
+        </select>
+        <input type="text" id="claude-skills-dir" placeholder="skills dir (default ~/.claude/skills)"
+          value="${esc(state.settings.claude.skills_dir || "")}" autocomplete="off" style="flex:1">
+      </div>
+      <div class="int-note">Findings are produced by Claude Code's <code>/code-review</code> skill by default;
+        pick one of your own skills to replace it. Discovered live from
+        ${esc(state.skills?.dir || "~/.claude/skills")} (${(state.skills?.skills || []).length} found);
+        a skill's own <code>allowed-tools</code> applies when declared.</div>
     </div>
 
     <div class="set-section-label">PR hosts</div>
@@ -1723,6 +1782,18 @@ function renderSettings() {
     await api("/api/settings/claude", { method: "PUT", body: { values: { model: e.target.value } } });
     toast(`Model set to ${e.target.value}`);
     state.settings.claude.model = e.target.value;
+  });
+  $("#claude-skill")?.addEventListener("change", async (e) => {
+    await api("/api/settings/claude", { method: "PUT", body: { values: { review_skill: e.target.value } } });
+    toast(e.target.value ? `Findings will use /${e.target.value}` : "Findings will use built-in /code-review");
+    if (state.skills) state.skills.selected = e.target.value;
+  });
+  $("#claude-skills-dir")?.addEventListener("change", async (e) => {
+    await api("/api/settings/claude", { method: "PUT", body: { values: { skills_dir: e.target.value.trim() } } });
+    state.settings.claude.skills_dir = e.target.value.trim();
+    state.skills = await api("/api/skills").catch(() => state.skills);
+    renderSettings();  // re-list skills from the new directory
+    toast("Skills directory updated");
   });
 }
 
@@ -2047,6 +2118,7 @@ $("#overlay-cancel").addEventListener("click", async () => {
 (async function init() {
   show("command-center");
   state.settings = await api("/api/settings").catch(() => null);
+  state.skills = await api("/api/skills").catch(() => null);
   refreshClaude(false);
   loadPRs();
   // keep the Command Center fresh: closed/merged PRs drop off without a manual refresh

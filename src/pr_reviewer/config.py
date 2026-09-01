@@ -19,7 +19,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "bitbucket": {"username": "", "app_password": "", "repos": []},
     "linear": {"api_key": ""},
     "jira": {"site_url": "", "email": "", "api_token": ""},
-    "claude": {"model": "sonnet"},
+    # skills_dir: where to discover user skills ("" = ~/.claude/skills).
+    # review_skill: skill slash-command for the code-review pass ("" = built-in /code-review).
+    "claude": {"model": "sonnet", "skills_dir": "", "review_skill": ""},
     "pins": [],  # individually added PRs: "provider:owner/repo:number"
 }
 
