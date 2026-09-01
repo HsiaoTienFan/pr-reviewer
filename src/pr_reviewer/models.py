@@ -77,6 +77,10 @@ class BugFinding(BaseModel):
     detail: str = ""  # one terse sentence
     suggestion: str = ""
     anchors: list[Anchor] = Field(default_factory=list)
+    # Where the report itself pointed, kept even when it can't be anchored to a
+    # changed line (a real bug may sit outside the diff's hunks).
+    cited_file: str = ""
+    cited_line: int = 0
 
     @field_validator("severity", mode="before")
     @classmethod

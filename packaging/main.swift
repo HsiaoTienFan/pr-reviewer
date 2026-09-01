@@ -117,7 +117,7 @@ func statusHTML(title: String, detail: String, spinner: Bool, log: String = "") 
 
 // MARK: - App
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNavigationDelegate {
     var window: NSWindow!
     var webView: WKWebView!
     var server: Process?
@@ -152,6 +152,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let config = WKWebViewConfiguration()
         webView = WKWebView(frame: window.contentLayoutRect, configuration: config)
         webView.autoresizingMask = [.width, .height]
+        // Without a UIDelegate, WKWebView silently drops target="_blank" links
+        // (e.g. the "Open PR ↗" button) — route them to the system browser.
+        webView.uiDelegate = self
+        webView.navigationDelegate = self
         window.contentView = webView
 
         window.makeKeyAndOrderFront(nil)
@@ -203,6 +207,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func openLog() {
         NSWorkspace.shared.open(logFileURL())
+    }
+
+    // MARK: Link handling
+
+    /// target="_blank" / window.open — open externally, never spawn a child web view.
+    func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
+                 for navigationAction: WKNavigationAction,
+                 windowFeatures: WKWindowFeatures) -> WKWebView? {
+        if let url = navigationAction.request.url {
+            NSWorkspace.shared.open(url)
+        }
+        return nil
+    }
+
+    /// Defensive: any normal navigation that leaves the local app (external
+    /// http/https) also goes to the system browser; the window stays on the UI.
+    func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
+                 decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        if let url = navigationAction.request.url,
+           let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https",
+           let host = url.host, host != "127.0.0.1", host != "localhost" {
+            NSWorkspace.shared.open(url)
+            decisionHandler(.cancel)
+            return
+        }
+        decisionHandler(.allow)
     }
 
     // MARK: Server lifecycle

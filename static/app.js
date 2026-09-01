@@ -961,7 +961,9 @@ function findingsTabHtml(r) {
         ? `<a class="fnd-loc" data-goto-file="${esc(a.file)}" data-goto-line="${a.start}"
              title="${esc(a.file)}">${esc(a.file.split("/").pop())}<i>:${a.start}${
                a.end && a.end !== a.start ? `–${a.end}` : ""}</i></a>`
-        : `<span class="fnd-loc none" title="Not anchored to a changed line">—</span>`;
+        : (b.cited_file
+          ? `<span class="fnd-loc none" title="${esc(b.cited_file)}:${b.cited_line || "?"} — cited by the report but outside the changed lines">${esc(b.cited_file.split("/").pop())}<i>${b.cited_line ? `:${b.cited_line}` : ""} · off-diff</i></span>`
+          : `<span class="fnd-loc none" title="The report gave no location">—</span>`);
       rows += `<tr class="fnd-row" data-cat="${cat}" data-goto-card="${esc(b.id)}">
         <td class="fnd-id"><span class="fnd-badge" style="background:${SEV_COLORS[sev]}">${esc(b.id)}</span></td>
         <td class="fnd-cat"><span class="fnd-cat-tag c-${cat}">${esc(CAT_LABEL[cat])}</span></td>

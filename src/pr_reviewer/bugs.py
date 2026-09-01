@@ -52,10 +52,14 @@ STRUCTURE_PROMPT = """Below is a code-review report for a pull request. Convert 
 Hard constraints:
 - One finding per distinct issue in the report; drop praise, process notes, and non-issues.
 - title: <= 10 words; detail: ONE terse sentence; suggestion: one terse sentence or empty.
-- file: path as given in the report; start/end: the NEW-file line numbers it cites (start == end for a single line; 0 if none given).
+- file: REPO-RELATIVE path (e.g. src/auth/index.js — strip any checkout/sandbox directory prefix); start/end: NEW-file line numbers.
+- Assign lines aggressively: use the line the report cites; when it names a symbol or change without a number, pick the matching range from "Changed line ranges" below. Only use 0 when the issue genuinely concerns no changed line.
 - severity: use the report's own rating when present, else judge. blocker = must fix before merge (broken/exploitable); major = real risk, should fix; minor = worth addressing; nit = optional polish.
 - category: what KIND of issue it is, independent of severity. correctness (wrong behaviour/logic), security, performance, testing (missing/weak tests), maintainability (structure, duplication, dead code), style (naming, formatting), docs, other.
 - Empty findings list if the report found nothing.
+
+Changed line ranges (file — NEW-file ranges in this PR's diff):
+{hunks_index}
 
 Report:
 {report}"""
@@ -155,9 +159,28 @@ def resolve_review_skill(skill: str, skills_dir: str = "") -> tuple[str, list[st
     return None
 
 
+# Skill reports cite files from the sandbox checkout, i.e. absolute paths like
+# /…/.pr-reviewer/sandbox/repo/src/x.js — strip that prefix before matching.
+_SANDBOX_PREFIX_RE = re.compile(r"^.*?/\.pr-reviewer/sandbox/(?:repo/)?")
+
+
+def _resolve_cited_file(cited: str, files: list[str]) -> str:
+    """Map a report-cited path onto a diff file path, or "" if it isn't one.
+
+    Exact match after sandbox-prefix stripping; otherwise a suffix match at a
+    path boundary, accepted only when unambiguous."""
+    cited = _SANDBOX_PREFIX_RE.sub("", cited.strip().lstrip("/"))
+    if not cited:
+        return ""
+    if cited in files:
+        return cited
+    ends = [f for f in files if cited.endswith("/" + f) or f.endswith("/" + cited)]
+    return ends[0] if len(ends) == 1 else ""
+
+
 def attach_findings(findings_raw: list[dict[str, Any]], hunks: list[Hunk]) -> list[BugFinding]:
     """Anchor findings to diff lines where possible; keep un-anchorable ones
-    (a real bug may sit outside the changed ranges) without line anchors."""
+    (a real bug may sit outside the changed ranges) with their citation intact."""
     by_file: dict[str, list[Hunk]] = {}
     for h in hunks:
         by_file.setdefault(h.file, []).append(h)
@@ -170,7 +193,7 @@ def attach_findings(findings_raw: list[dict[str, Any]], hunks: list[Hunk]) -> li
         if cat not in ("correctness", "security", "performance", "testing",
                        "maintainability", "style", "docs", "other"):
             cat = "other"
-        file = f.get("file", "")
+        file = _resolve_cited_file(str(f.get("file", "")), list(by_file))
         try:
             start, end = int(f.get("start", 0)), int(f.get("end", 0))
         except (TypeError, ValueError):
@@ -187,8 +210,17 @@ def attach_findings(findings_raw: list[dict[str, Any]], hunks: list[Hunk]) -> li
             detail=(f.get("detail") or "").strip(),
             suggestion=(f.get("suggestion") or "").strip(),
             anchors=anchors,
+            cited_file=file or _SANDBOX_PREFIX_RE.sub("", str(f.get("file", "")).strip().lstrip("/")),
+            cited_line=start,
         ))
     return out
+
+
+def _hunks_index(hunks: list[Hunk]) -> str:
+    by_file: dict[str, list[str]] = {}
+    for h in hunks:
+        by_file.setdefault(h.file, []).append(f"{h.start}\u2013{h.end}")
+    return "\n".join(f"- {f}: {', '.join(r)}" for f, r in sorted(by_file.items())) or "- (none)"
 
 
 async def collect_findings_raw(
@@ -197,8 +229,11 @@ async def collect_findings_raw(
     progress: Callable[[str, str], None] = lambda s, d: None,
     skill: str = "",
     skills_dir: str = "",
-) -> tuple[dict[str, Any], str]:
-    """URL-only phase: run the review skill on the PR and structure its report.
+) -> str:
+    """URL-only phase: run the review skill on the PR and return its report.
+
+    Structuring happens later in run_code_review, where the parsed hunks exist
+    and line assignment can target the diff's changed ranges.
 
     Needs no parsed hunks, so the main pipeline can start this concurrently
     before the diff is even fetched. Raises LLMError when the skill path fails;
@@ -211,10 +246,7 @@ async def collect_findings_raw(
             prompt, tools = resolved
             label = f"/{skill}"
     progress("findings", f"Running Claude Code {label} on the PR")
-    report = await backend.text(prompt.format(url=pr_url), allowed_tools=tools)
-    progress("findings", "Structuring the review report")
-    raw = await backend.structured(STRUCTURE_PROMPT.format(report=report), BUGS_SCHEMA)
-    return raw, report
+    return await backend.text(prompt.format(url=pr_url), allowed_tools=tools)
 
 
 async def run_code_review(
@@ -223,7 +255,7 @@ async def run_code_review(
     progress: Callable[[str, str], None] = lambda s, d: None,
     skill: str = "",
     skills_dir: str = "",
-    precollected: "asyncio.Task[tuple[dict[str, Any], str]] | None" = None,
+    precollected: "asyncio.Task[str] | None" = None,
 ) -> tuple[list[BugFinding], str, int]:
     """→ (findings, raw report text, findings dropped beyond the cap).
     The raw report is preserved verbatim — the table is a compression of it.
@@ -237,18 +269,26 @@ async def run_code_review(
     report = ""
     if precollected is not None:
         try:
-            raw, report = await precollected
+            report = await precollected
         except asyncio.CancelledError:
             raise
         except Exception:
-            raw, report = None, ""
+            report = ""
     elif review.pr.url:
         try:
-            raw, report = await collect_findings_raw(
+            report = await collect_findings_raw(
                 review.pr.url, backend, progress, skill=skill, skills_dir=skills_dir)
         except LLMError:
-            raw = None
             report = ""
+    if report.strip():
+        progress("findings", "Structuring the review report")
+        try:
+            raw = await backend.structured(
+                STRUCTURE_PROMPT.format(hunks_index=_hunks_index(review.hunks), report=report),
+                BUGS_SCHEMA,
+            )
+        except LLMError:
+            raw = None
     if not isinstance(raw, dict) or not isinstance(raw.get("findings"), list):
         progress("code-review", "Skill path unavailable — reviewing the diff directly")
         raw = await backend.structured(

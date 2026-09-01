@@ -469,3 +469,31 @@ def test_skill_frontmatter_discovery(tmp_path):
     assert resolved == ("/my-review {url}", ["Read", "Bash(gh pr diff *)"])
     # unknown names are rejected — the value reaches the CLI prompt
     assert resolve_review_skill("../evil", str(tmp_path)) is None
+
+
+def test_findings_anchor_despite_sandbox_paths():
+    """Skill reports cite sandbox-absolute paths; findings must still anchor
+    to the repo-relative hunks, and off-diff citations must be preserved."""
+    from pr_reviewer.bugs import attach_findings
+    from pr_reviewer.models import Hunk
+
+    hunks = [Hunk(id="H1", file="graphql/authorization/index.js",
+                  start=180, end=230, patch="x")]
+    out = attach_findings([
+        {"severity": "blocker", "category": "security", "title": "t", "detail": "d",
+         "file": "/Users/u/.pr-reviewer/sandbox/repo/graphql/authorization/index.js",
+         "start": 197, "end": 197},
+        {"severity": "major", "category": "security", "title": "t2", "detail": "d",
+         "file": "server/passport.js", "start": 125, "end": 125},  # not in diff
+        {"severity": "nit", "category": "style", "title": "t3", "detail": "d",
+         "file": "", "start": 0, "end": 0},
+    ], hunks)
+
+    a = out[0]
+    assert a.anchors and a.anchors[0].file == "graphql/authorization/index.js"
+    assert a.anchors[0].start == 197 and a.cited_line == 197
+
+    b = out[1]  # keeps its citation for display even though it can't anchor
+    assert not b.anchors and (b.cited_file, b.cited_line) == ("server/passport.js", 125)
+
+    assert not out[2].anchors and out[2].cited_file == ""
