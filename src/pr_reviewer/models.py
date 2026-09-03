@@ -81,6 +81,10 @@ class BugFinding(BaseModel):
     # changed line (a real bug may sit outside the diff's hunks).
     cited_file: str = ""
     cited_line: int = 0
+    # Reviewer-owned state: a free-text note, and whether the reviewer adjusted
+    # severity/category. Carried across findings re-runs (matched by title).
+    note: str = ""
+    edited: bool = False
 
     @field_validator("severity", mode="before")
     @classmethod

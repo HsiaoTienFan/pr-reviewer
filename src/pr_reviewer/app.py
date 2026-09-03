@@ -515,8 +515,9 @@ async def start_review(body: ReviewRequest) -> dict[str, Any]:
                 progress("done", f"Review complete (findings failed: {e} — use ↻ Findings to retry)")
             else:
                 async with _review_lock(rid):
+                    from .bugs import carry_finding_edits
                     latest = config.load_review(rid) or review
-                    latest.bugs = findings
+                    latest.bugs = carry_finding_edits(latest.bugs, findings)
                     latest.bugs_ran = True
                     latest.bugs_stale = False
                     latest.bugs_report = report
@@ -650,6 +651,41 @@ async def remove_review(rid: str) -> dict[str, Any]:
     active = {r.pr.repo for r in config.all_reviews()}
     removed = cleanup_sandbox(active)
     return {"deleted": rid, "sandbox_removed": removed}
+
+
+class FindingEdit(BaseModel):
+    severity: str | None = None
+    category: str | None = None
+    note: str | None = None
+
+
+@app.patch("/api/reviews/{rid:path}/findings/{fid}")
+async def edit_finding(rid: str, fid: str, body: FindingEdit) -> dict[str, Any]:
+    """Reviewer adjustments to a finding: severity, category, attached note.
+    These are the reviewer's decisions — they survive re-runs (title-matched)."""
+    from .bugs import VALID_CATEGORIES, VALID_SEVERITIES
+
+    if body.severity is not None and body.severity not in VALID_SEVERITIES:
+        raise HTTPException(400, f"severity must be one of {VALID_SEVERITIES}")
+    if body.category is not None and body.category not in VALID_CATEGORIES:
+        raise HTTPException(400, f"category must be one of {VALID_CATEGORIES}")
+    async with _review_lock(rid):
+        review = config.load_review(rid)
+        if review is None:
+            raise HTTPException(404, "no stored review")
+        finding = next((b for b in review.bugs if b.id == fid), None)
+        if finding is None:
+            raise HTTPException(404, f"no finding {fid}")
+        if body.severity is not None and body.severity != finding.severity:
+            finding.severity = body.severity
+            finding.edited = True
+        if body.category is not None and body.category != finding.category:
+            finding.category = body.category
+            finding.edited = True
+        if body.note is not None:
+            finding.note = body.note.strip()[:4000]
+        config.save_review(review)
+        return {"finding": finding.model_dump()}
 
 
 class AskRequest(BaseModel):
@@ -814,8 +850,9 @@ async def start_code_review(rid: str) -> dict[str, Any]:
             )
             async with _review_lock(rid):
                 # reload: a re-run may have replaced the review while we worked
+                from .bugs import carry_finding_edits
                 latest = config.load_review(rid) or review
-                latest.bugs = findings
+                latest.bugs = carry_finding_edits(latest.bugs, findings)
                 latest.bugs_ran = True
                 latest.bugs_stale = False
                 latest.bugs_report = report

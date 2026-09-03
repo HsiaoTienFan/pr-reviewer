@@ -359,6 +359,26 @@
   .fnd-loc.none { color: var(--muted); }
   .fnd-none { padding: 26px; text-align: center; color: var(--muted); font-size: 12.5px; }
 
+  /* reviewer assessment on findings */
+  .fnd-note {
+    margin-top: 6px; padding: 6px 10px; font-size: 12px; line-height: 1.5;
+    background: var(--amber-bg); border: 1px solid #eed888; border-radius: 6px; color: #6b5300;
+  }
+  .fnd-edited { margin-left: 4px; font-size: 11px; color: var(--blue); }
+
+  /* review-in-progress card (replaces the old modal) */
+  .job-card {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+    padding: 18px 22px; margin-top: 18px;
+  }
+  .job-card h2 { margin: 0 0 4px; font-size: 15px; }
+  .job-card .job-detail { color: var(--muted); font-size: 12.5px; margin-bottom: 12px; }
+  .job-card.compact {
+    display: flex; align-items: center; gap: 10px; padding: 9px 14px;
+    margin: 12px 0 0; border-left: 3px solid var(--blue);
+  }
+  .job-card.compact .job-detail { margin: 0; flex: 1; }
+
   /* custom-review section editor */
   .cr-sec { display: flex; align-items: center; gap: 8px; padding: 3px 2px; font-size: 12.5px; }
   .cr-sec label { display: flex; align-items: center; gap: 6px; cursor: pointer; }

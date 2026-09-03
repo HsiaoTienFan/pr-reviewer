@@ -351,6 +351,31 @@ def _hunks_index(hunks: list[Hunk]) -> str:
     return "\n".join(f"- {f}: {', '.join(r)}" for f, r in sorted(by_file.items())) or "- (none)"
 
 
+VALID_SEVERITIES = ("blocker", "major", "minor", "nit")
+VALID_CATEGORIES = ("correctness", "security", "performance", "testing",
+                    "maintainability", "style", "docs", "other")
+
+
+def carry_finding_edits(old: list[BugFinding], new: list[BugFinding]) -> list[BugFinding]:
+    """Preserve reviewer decisions across findings re-runs.
+
+    Matched by exact title: notes always carry; when the reviewer explicitly
+    adjusted severity/category (edited=True), their judgment overrides whatever
+    the fresh run derived — re-running analysis must not erase decisions."""
+    by_title = {b.title.strip(): b for b in old if b.note or b.edited}
+    out = []
+    for b in new:
+        prev = by_title.get(b.title.strip())
+        if prev is None:
+            out.append(b)
+            continue
+        upd: dict = {"note": prev.note}
+        if prev.edited:
+            upd.update(severity=prev.severity, category=prev.category, edited=True)
+        out.append(b.model_copy(update=upd))
+    return out
+
+
 async def collect_findings_raw(
     pr_url: str,
     backend: LLMBackend,

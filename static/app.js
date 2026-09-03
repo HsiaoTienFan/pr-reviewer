@@ -53,6 +53,8 @@ const state = {
   settings: null,      // masked config
   claude: null,        // backend status
   prs: null,           // /api/prs payload
+  reviewJobs: {},      // rid -> job_id for running full reviews (inline cards, no modal)
+  reviewWatch: {},     // rid -> poll timer
   review: null,        // currently open review
   testNotes: {},       // section → {ok, message}
   pollTimer: null,
@@ -238,6 +240,9 @@ async function loadPRs() {
 }
 
 function reviewStateHtml(pr) {
+  if (state.reviewJobs[`${pr.provider}:${pr.repo}:${pr.number}`]) {
+    return `<span class="pill info"><span class="spin"></span> Reviewing…</span>`;
+  }
   const r = pr.review;
   if (!r) {
     const detail = pr.tickets.length ? "" : "will run in explain mode";
@@ -407,41 +412,99 @@ async function startReview(params) {
     await openReview(job.review_id);
     return;
   }
-  state.currentJob = job.job_id;
-  $("#overlay-title").textContent = "Running review…";
-  $("#overlay-sub").textContent = job.review_id;
-  $("#overlay-error").innerHTML = "";
-  $("#overlay-actions").style.display = "block";
-  $("#overlay-cancel").style.display = "";
-  $("#overlay-close").style.display = "none";
-  $("#overlay-stages").innerHTML = renderStages("fetch", false, false);
-  $("#overlay").classList.add("visible");
+  const rid = job.review_id;
+  state.reviewJobs[rid] = job.job_id;
+  if (state.review?.id === rid) {
+    renderReview();            // re-run: compact progress card atop the review
+  } else {
+    showPendingReview(rid);    // fresh review: the card IS the page for now
+  }
+  watchReviewJob(rid, job.job_id);
+}
 
-  clearInterval(state.pollTimer);
-  state.pollTimer = setInterval(async () => {
+/* The review-in-progress card — lives on the PR page, never a modal. The app
+   stays fully navigable; leaving and returning re-shows the live card. */
+
+function pendingReviewHtml(rid, st) {
+  const stages = renderStages(st?.stage || "fetch", !!(st?.done && !st.error), !!st?.error);
+  const err = st?.error
+    ? `<div class="error-banner" style="margin-top:10px">${esc(st.error)}</div>`
+    : "";
+  return `
+    <div class="cc-wrap" style="max-width:640px">
+      <div class="ask-head"><span class="filter" data-nav-cc>‹ Command Center</span></div>
+      <div class="job-card" data-rid="${esc(rid)}">
+        <h2>${st?.error ? (st.error === "Cancelled" ? "Review cancelled" : "Review failed") : "Running review…"}</h2>
+        <div class="job-detail" id="job-detail">${esc(st?.detail || rid)}</div>
+        <div id="job-stages">${stages}</div>
+        ${err}
+        <div style="margin-top:12px;text-align:right">
+          ${st?.error ? `<button class="btn" data-nav-cc>Back</button>`
+                      : `<button class="btn" data-cancel-job="${esc(state.reviewJobs[rid] || "")}">✕ Cancel run</button>`}
+        </div>
+      </div>
+    </div>`;
+}
+
+function showPendingReview(rid, st) {
+  state.review = null;
+  state.pendingRid = rid;
+  $("#review-content").innerHTML = pendingReviewHtml(rid, st);
+  show("review");
+}
+
+function reviewJobCard(rid) {
+  const jobId = state.reviewJobs[rid];
+  if (!jobId) return "";
+  return `<div class="job-card compact" data-rid="${esc(rid)}">
+    <span class="spin"></span>
+    <span class="job-detail" id="job-detail">Re-running review — current results shown below may be replaced…</span>
+    <button class="btn small" data-cancel-job="${esc(jobId)}">✕ Cancel</button>
+  </div>`;
+}
+
+function watchReviewJob(rid, jobId) {
+  if (state.reviewWatch[rid]) return;
+  state.reviewWatch[rid] = setInterval(async () => {
     let st;
     try {
-      st = await api(`/api/jobs/${job.job_id}`);
-    } catch { return; }
-    $("#overlay-stages").innerHTML = renderStages(st.stage, st.done && !st.error, !!st.error);
-    $("#overlay-sub").textContent = st.detail || job.review_id;
-    if (st.error) {
-      clearInterval(state.pollTimer);
-      $("#overlay-title").textContent = st.error === "Cancelled" ? "Review cancelled" : "Review failed";
-      $("#overlay-error").innerHTML = `<div class="error-banner">${esc(st.error)}</div>`;
-      $("#overlay-actions").style.display = "block";
-      $("#overlay-cancel").style.display = "none";
-      $("#overlay-close").style.display = "";
-      $("#overlay-close").textContent = "Close";
-    } else if (st.done) {
-      clearInterval(state.pollTimer);
-      $("#overlay").classList.remove("visible");
-      $("#overlay-cancel").style.display = "none";
-      $("#overlay-close").style.display = "";
-      await openReview(st.review_id);
-      loadPRs(); // refresh command-center summaries in the background
+      st = await api(`/api/jobs/${jobId}`);
+    } catch {
+      clearInterval(state.reviewWatch[rid]);
+      delete state.reviewWatch[rid];
+      delete state.reviewJobs[rid];
+      if (state.pendingRid === rid) showPendingReview(rid, { error: "Job lost (server restarted?) — try again." });
+      return;
     }
-  }, 700);
+    // live-update whichever card for this rid is on screen
+    const card = document.querySelector(`.job-card[data-rid="${CSS.escape(rid)}"]`);
+    if (card && !st.done) {
+      const d = card.querySelector(".job-detail");
+      if (d) d.textContent = st.detail || rid;
+      const stg = card.querySelector("#job-stages");
+      if (stg) stg.innerHTML = renderStages(st.stage, false, false);
+    }
+    if (!st.done) return;
+
+    clearInterval(state.reviewWatch[rid]);
+    delete state.reviewWatch[rid];
+    delete state.reviewJobs[rid];
+    if (st.error) {
+      if (state.pendingRid === rid) {
+        showPendingReview(rid, st);          // card flips to its error state
+      } else {
+        toast(`Review ${st.error === "Cancelled" ? "cancelled" : "failed: " + st.error}`, st.error !== "Cancelled");
+        if (state.review?.id === rid) renderReview();  // drop the compact card
+      }
+    } else {
+      toast("Review complete ✓");
+      if (state.pendingRid === rid || state.review?.id === rid) {
+        state.pendingRid = null;
+        await openReview(rid);
+      }
+    }
+    loadPRs(); // refresh command-center summaries in the background
+  }, 800);
 }
 
 /* ================================================================ review screen */
@@ -975,12 +1038,13 @@ function findingsTabHtml(r) {
           ? `<span class="fnd-loc none" title="${esc(b.cited_file)}:${b.cited_line || "?"} — cited by the report but outside the changed lines">${esc(b.cited_file.split("/").pop())}<i>${b.cited_line ? `:${b.cited_line}` : ""} · off-diff</i></span>`
           : `<span class="fnd-loc none" title="The report gave no location">—</span>`);
       rows += `<tr class="fnd-row" data-cat="${cat}" data-open-finding="${esc(b.id)}">
-        <td class="fnd-id"><span class="fnd-badge" style="background:${SEV_COLORS[sev]}">${esc(b.id)}</span></td>
+        <td class="fnd-id"><span class="fnd-badge" style="background:${SEV_COLORS[sev]}">${esc(b.id)}</span>${b.edited ? `<span class="fnd-edited" title="Severity/category adjusted by you">✎</span>` : ""}</td>
         <td class="fnd-cat"><span class="fnd-cat-tag c-${cat}">${esc(CAT_LABEL[cat])}</span></td>
         <td class="fnd-what">
           <div class="fnd-title">${md(b.title)}</div>
           ${b.detail ? `<div class="fnd-detail">${md(b.detail)}</div>` : ""}
           ${b.suggestion ? `<div class="fnd-fix"><b>Fix</b> ${md(b.suggestion)}</div>` : ""}
+          ${b.note ? `<div class="fnd-note">📝 ${md(b.note)}</div>` : ""}
         </td>
         <td class="fnd-where">${loc}</td>
       </tr>`;
@@ -1036,6 +1100,22 @@ function renderFindingPage() {
       ${b.detail ? `<div class="mechanism">${md(b.detail)}</div>` : ""}
       ${b.suggestion ? `<div class="missing-note">Fix: ${md(b.suggestion)}</div>` : ""}
       ${loc ? `<div class="anchors">${loc}</div>` : ""}
+      ${b.note ? `<div class="fnd-note">📝 ${md(b.note)}</div>` : ""}
+    </div>
+    <div class="card" style="margin-top:10px">
+      <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap">
+        <b style="font-size:12px">Your assessment</b>
+        <label class="ask-inspect">Severity
+          <select id="fe-sev">${SEV_ORDER.map((s2) => `<option value="${s2}" ${s2 === sev ? "selected" : ""}>${SEV_LABEL[s2]}</option>`).join("")}</select>
+        </label>
+        <label class="ask-inspect">Category
+          <select id="fe-cat">${CAT_ORDER.map((c2) => `<option value="${c2}" ${c2 === cat ? "selected" : ""}>${CAT_LABEL[c2]}</option>`).join("")}</select>
+        </label>
+        ${b.edited ? `<span class="pill info">✎ adjusted by you</span>` : ""}
+      </div>
+      <textarea id="fe-note" rows="3" style="width:100%;margin-top:8px;padding:8px 10px;border:1px solid var(--border);border-radius:6px;font:12.5px/1.5 inherit;resize:vertical"
+        placeholder="Attach a note — your decision, context, follow-ups. Notes and adjustments survive re-runs.">${esc(b.note || "")}</textarea>
+      <div style="text-align:right;margin-top:6px"><button class="btn" id="fe-save">Save assessment</button></div>
     </div>
     <div class="ask-thread">${msgs}${pending}</div>
     <div class="ask-box">
@@ -1045,6 +1125,20 @@ function renderFindingPage() {
         <button class="btn primary" id="ask-send" ${state.askPending ? "disabled" : ""}>Ask</button>
       </div>
     </div>`;
+  $("#fe-save")?.addEventListener("click", async () => {
+    const body = { severity: $("#fe-sev").value, category: $("#fe-cat").value, note: $("#fe-note").value };
+    try {
+      const res = await api(
+        `/api/reviews/${encodeURIComponent(state.review.id)}/findings/${state.findingId}`,
+        { method: "PATCH", body });
+      const i = state.review.bugs.findIndex((x) => x.id === state.findingId);
+      if (i >= 0) state.review.bugs[i] = res.finding;
+      toast("Assessment saved — it will survive re-runs");
+      renderFindingPage();
+    } catch (e) {
+      toast(`Could not save: ${e.message}`, true);
+    }
+  });
   $("#ask-send")?.addEventListener("click", sendAsk);
   $("#ask-input")?.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) sendAsk();
@@ -1446,6 +1540,7 @@ function renderReview() {
           </div>
           ${b.detail ? `<div class="mechanism">${md(b.detail)}</div>` : ""}
           ${b.suggestion ? `<div class="missing-note">Fix: ${md(b.suggestion)}</div>` : ""}
+          ${b.note ? `<div class="fnd-note">📝 ${md(b.note)}</div>` : ""}
           ${anchors ? `<div class="anchors">${anchors}</div>` : ""}
           <div class="card-foot"><button class="btn small" data-open-finding="${b.id}">💬 Ask${(r.threads?.[b.id]?.length) ? ` · ${r.threads[b.id].length / 2}` : ""}</button></div>
         </div>`;
@@ -1460,7 +1555,7 @@ function renderReview() {
         <ul>${r.net_effect.map((l) => `<li>${md(l)}</li>`).join("")}</ul></div>`
     : "";
 
-  $("#review-content").innerHTML = `
+  $("#review-content").innerHTML = `${reviewJobCard(r.id)}
     <header class="review-head">
       <div class="crumb" data-nav="command-center">‹ Command Center</div>
       <div class="pr-title">${esc(pr.title)} <span class="num">#${pr.number}</span></div>
@@ -1574,16 +1669,7 @@ async function runCodeReviewJob(rid) {
   state.currentJob = job.job_id;
   if (state.review?.id === rid) renderReview(); // button → spinner
 
-  $("#overlay-title").textContent = "Running code review…";
-  $("#overlay-sub").textContent = "Starting — a full /code-review run usually takes 2–10 minutes";
-  $("#overlay-error").innerHTML = "";
-  $("#overlay-stages").innerHTML = `<div class="stage-row now"><span class="mark"><span class="spin"></span></span><span>Claude Code /code-review</span></div>`;
-  $("#overlay-actions").style.display = "block";
-  $("#overlay-cancel").style.display = "";
-  $("#overlay-close").style.display = "";
-  $("#overlay-close").textContent = "Continue in background";
-  $("#overlay").classList.add("visible");
-
+  toast("Findings run started — usually 2–10 minutes; keep browsing, it lands automatically");
   watchBugsJob(rid, job.job_id, Date.now());
 }
 
@@ -1645,16 +1731,12 @@ function watchBugsJob(rid, jobId, startedMs) {
     }
     const mins = Math.floor((Date.now() - startedMs) / 60000);
     const elapsed = mins ? ` · running ${mins}m` : "";
-    if ($("#overlay").classList.contains("visible")) {
-      $("#overlay-sub").textContent = (st.detail || rid) + elapsed;
-    }
+    void elapsed;
     if (!st.done) return;
 
     clearInterval(state.bugsWatch[rid]);
     delete state.bugsWatch[rid];
     delete state.bugsJobs[rid];
-    $("#overlay").classList.remove("visible");
-    $("#overlay-close").textContent = "Close";
     if (st.error) {
       toast(`Code review failed: ${st.error}`, true);
       if (state.review?.id === rid) renderReview();
@@ -2117,6 +2199,19 @@ document.addEventListener("click", (e) => {
 
   if (e.target.closest("[data-retry-prs]")) {
     $("#cc-content").innerHTML = `<div class="empty-state">Loading…</div>`;
+    loadPRs();
+    return;
+  }
+
+  const cancelJob = e.target.closest("[data-cancel-job]");
+  if (cancelJob) {
+    api(`/api/jobs/${cancelJob.dataset.cancelJob}/cancel`, { method: "POST" }).catch(() => {});
+    cancelJob.disabled = true;
+    return;
+  }
+  if (e.target.closest("[data-nav-cc]")) {
+    state.pendingRid = null;
+    show("command-center");
     loadPRs();
     return;
   }

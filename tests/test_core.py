@@ -591,3 +591,30 @@ def test_instructions_block_bounded_and_injected():
     big = instructions_block("x" * 100_000)
     assert len(big) < MAX_INSTRUCTIONS_CHARS + 200
     assert "[instructions truncated]" in big
+
+
+def test_finding_edits_survive_reruns():
+    """Reviewer notes and severity/category adjustments must not be erased by
+    a fresh findings run — matched by title, reviewer judgment wins."""
+    from pr_reviewer.bugs import carry_finding_edits
+    from pr_reviewer.models import BugFinding
+
+    old = [
+        BugFinding(id="B1", severity="minor", category="correctness", title="Allowlist role",
+                   note="config-driven, not remote — one-line fix", edited=True),
+        BugFinding(id="B2", severity="nit", category="docs", title="Docs gap", note="ok to ship"),
+        BugFinding(id="B3", severity="major", category="security", title="Untouched"),
+    ]
+    new = [
+        # fresh run re-derived different severity/category for the edited one
+        BugFinding(id="B1", severity="blocker", category="security", title="Allowlist role"),
+        BugFinding(id="B2", severity="nit", category="docs", title="Docs gap"),
+        BugFinding(id="B4", severity="minor", category="testing", title="Brand new"),
+    ]
+    out = carry_finding_edits(old, new)
+
+    b1 = out[0]  # reviewer's adjustment overrides the fresh derivation
+    assert (b1.severity, b1.category, b1.edited) == ("minor", "correctness", True)
+    assert b1.note == "config-driven, not remote — one-line fix"
+    assert out[1].note == "ok to ship" and not out[1].edited  # note-only carry
+    assert out[2].title == "Brand new" and out[2].note == "" and not out[2].edited
