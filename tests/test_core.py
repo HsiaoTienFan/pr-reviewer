@@ -546,3 +546,48 @@ def test_ask_context_is_bounded_against_chunking_regression():
     assert len(prompt) < 120_000, f"ask prompt unbounded: {len(prompt):,} chars"
     assert "[report truncated for size]" in prompt
     assert "earlier turns omitted for size" in prompt
+
+
+def test_auto_candidates_scope_is_tagged_or_requested_only():
+    """Auto-review must trigger ONLY for PRs where the user is tagged/requested:
+    not their own PRs, not drafts, not bots, not unrelated, no pre-enable backfill."""
+    from datetime import datetime, timezone
+
+    from pr_reviewer.app import _auto_candidates
+    from pr_reviewer.models import PRInfo
+
+    def pr(n, **kw):
+        base = dict(provider="github", repo="x/y", number=n, url="", title=f"pr{n}",
+                    author="alice", updated_at="2026-09-03T12:00:00+00:00",
+                    state="open", assignees=[], reviewers=[])
+        base.update(kw)
+        return PRInfo(**base)
+
+    since = datetime(2026, 9, 3, 0, 0, tzinfo=timezone.utc)
+    prs = [
+        pr(1, reviewers=["me"]),                              # requested -> IN
+        pr(2, assignees=["me"]),                              # assigned  -> IN
+        pr(3),                                                # unrelated -> out
+        pr(4, author="me", reviewers=["me"]),                 # own PR    -> out
+        pr(5, reviewers=["me"], draft=True),                  # draft     -> out
+        pr(6, author="dependabot[bot]", reviewers=["me"]),    # bot       -> out
+        pr(7, reviewers=["me"], state="merged"),              # not open  -> out
+        pr(8, reviewers=["me"],
+           updated_at="2026-09-02T12:00:00+00:00"),           # pre-enable -> out
+    ]
+    picked = [p.number for p in _auto_candidates(prs, "me", since)]
+    assert picked == [1, 2]
+    # unknown user (auth failure) selects nothing — fail closed
+    assert _auto_candidates(prs, "", since) == []
+
+
+def test_instructions_block_bounded_and_injected():
+    """Standing instructions are bounded like every other prompt component."""
+    from pr_reviewer.pipeline import MAX_INSTRUCTIONS_CHARS, instructions_block
+
+    assert instructions_block("") == "" and instructions_block("  \n ") == ""
+    b = instructions_block("Always check tests accompany behaviour changes.")
+    assert "standing instructions" in b and "Always check tests" in b
+    big = instructions_block("x" * 100_000)
+    assert len(big) < MAX_INSTRUCTIONS_CHARS + 200
+    assert "[instructions truncated]" in big

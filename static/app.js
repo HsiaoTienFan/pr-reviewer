@@ -945,16 +945,26 @@ function findingsTabHtml(r) {
       `<span class="fnd-chip" data-fnd-cat="${c}">${esc(CAT_LABEL[c])} · ${catCounts[c]}</span>`))
     .join("");
 
+  const groupBy = state.settings?.custom_review?.findings_group_by === "category" ? "category" : "severity";
+  const bsevOf = (b) => (SEV_LABEL[b.severity] ? b.severity : "minor");
   let rows = "";
-  for (const sev of SEV_ORDER) {
-    const group = bugs.filter((b) => (SEV_LABEL[b.severity] ? b.severity : "minor") === sev);
+  for (const gk of (groupBy === "category" ? CAT_ORDER : SEV_ORDER)) {
+    const group = groupBy === "category"
+      ? bugs.filter((b) => (CAT_LABEL[b.category] ? b.category : "other") === gk)
+          .sort((x, y) => SEV_ORDER.indexOf(bsevOf(x)) - SEV_ORDER.indexOf(bsevOf(y)))
+      : bugs.filter((b) => bsevOf(b) === gk);
     if (!group.length) continue;
-    rows += `<tr class="fnd-group"><td colspan="4">
-      <span class="fnd-dot" style="background:${SEV_COLORS[sev]}"></span>
-      ${esc(SEV_LABEL[sev])} <span class="fnd-group-n">${group.length}</span>
-      <span class="fnd-group-blurb">${esc(SEV_BLURB[sev])}</span></td></tr>`;
+    rows += groupBy === "category"
+      ? `<tr class="fnd-group"><td colspan="4">
+      <span class="fnd-dot" style="background:var(--muted)"></span>
+      ${esc(CAT_LABEL[gk])} <span class="fnd-group-n">${group.length}</span></td></tr>`
+      : `<tr class="fnd-group"><td colspan="4">
+      <span class="fnd-dot" style="background:${SEV_COLORS[gk]}"></span>
+      ${esc(SEV_LABEL[gk])} <span class="fnd-group-n">${group.length}</span>
+      <span class="fnd-group-blurb">${esc(SEV_BLURB[gk])}</span></td></tr>`;
 
     for (const b of group) {
+      const sev = bsevOf(b);
       const cat = CAT_LABEL[b.category] ? b.category : "other";
       const a = (b.anchors || [])[0];
       const loc = a
@@ -1092,10 +1102,12 @@ function summaryTabHtml(r) {
   };
 
   let html = `<div class="sum-wrap">`;
+  html += "<!--SEC:net_effect-->";
   if (r.net_effect.length) {
     html += `<div class="sum-net"><b>Net effect</b><ul>${r.net_effect.map((l) => `<li>${md(l)}</li>`).join("")}</ul>${overflowNote(r, "net_effect", "net-effect lines")}</div>`;
   }
 
+  html += "<!--SEC:requirements-->";
   if (!isExplain && r.requirements.length) {
     html += `<div class="sum-section">Requirements · ${r.requirements.length}</div>
     <table class="sum"><thead><tr>
@@ -1121,6 +1133,7 @@ function summaryTabHtml(r) {
     html += `</tbody></table>` + overflowNote(r, "requirements", "requirements");
   }
 
+  html += "<!--SEC:unexplained-->";
   if (r.unexplained.length) {
     html += `<div class="sum-section">${isExplain ? "Changes" : "Unexplained changes"} · ${r.unexplained.length}</div>
     <table class="sum"><thead><tr>
@@ -1138,6 +1151,7 @@ function summaryTabHtml(r) {
     html += `</tbody></table>`;
   }
 
+  html += "<!--SEC:findings-->";
   if (r.bugs_ran) {
     const sevPill = { high: "err", medium: "warn", low: "idle" };
     html += `<div class="sum-section">Code review findings · ${r.bugs.length}${r.bugs_stale ? ` <span class="sum-missing">⚠ carried from a previous run</span>` : ""}</div>`;
@@ -1168,6 +1182,7 @@ function summaryTabHtml(r) {
       ];
       return ids.length ? ids.map(ridChip).join(" ") : `<span class="sum-muted">—</span>`;
     };
+    html += "<!--SEC:files-->";
     const statusLabel = { new: "NEW", mod: "MODIFIED", del: "DELETED", renamed: "RENAMED" };
     html += `<div class="sum-section">Files · ${r.files.length}</div>
     <table class="sum"><thead><tr>
@@ -1183,6 +1198,7 @@ function summaryTabHtml(r) {
     html += `</tbody></table>`;
   }
 
+  html += "<!--SEC:_tail-->";
   const u = r.llm_usage || {};
   if (u.calls) {
     const secs = Math.round((u.ms || 0) / 1000);
@@ -1191,7 +1207,39 @@ function summaryTabHtml(r) {
   }
 
   html += `</div>`;
-  return html;
+  return composeSummary(html);
+}
+
+const SUM_SECTION_KEYS = ["net_effect", "requirements", "unexplained", "findings", "files"];
+function crSectionRows() {
+  const cfg = state.settings?.custom_review;
+  const enabled = Array.isArray(cfg?.sections) && cfg.sections.length ? cfg.sections : [...SUM_SECTION_KEYS];
+  const all = enabled.concat(SUM_SECTION_KEYS.filter((k) => !enabled.includes(k)));
+  return all.map((k) => {
+    const on = enabled.includes(k);
+    return `<div class="cr-sec">
+      <label><input type="checkbox" data-cr-toggle="${k}" ${on ? "checked" : ""}> ${esc(SUM_SECTION_LABELS[k])}</label>
+      ${on ? `<span class="cr-arrows"><button class="btn small" data-cr-up="${k}">↑</button><button class="btn small" data-cr-down="${k}">↓</button></span>` : ""}
+    </div>`;
+  }).join("");
+}
+
+const SUM_SECTION_LABELS = {
+  net_effect: "Net effect", requirements: "Requirements",
+  unexplained: "Unexplained changes", findings: "Findings", files: "Files",
+};
+
+// The summary builds linearly with <!--SEC:x--> markers; reassemble per the
+// user's configured order/visibility (custom_review.sections).
+function composeSummary(html) {
+  const parts = html.split(/<!--SEC:(\w+)-->/);
+  let out = parts[0];
+  const chunks = {};
+  for (let i = 1; i < parts.length; i += 2) chunks[parts[i]] = parts[i + 1] || "";
+  const cfg = state.settings?.custom_review;
+  const order = Array.isArray(cfg?.sections) && cfg.sections.length ? cfg.sections : SUM_SECTION_KEYS;
+  for (const k of order) if (chunks[k]) out += chunks[k];
+  return out + (chunks._tail || "");
 }
 
 function flowPanelHtml(r) {
@@ -1766,6 +1814,58 @@ function renderSettings() {
         a skill's own <code>allowed-tools</code> applies when declared.</div>
     </div>
 
+    <div class="set-section-label">Automation</div>
+    <div class="integration">
+      <div class="int-head">
+        <span class="int-icon" style="background:#1a7f37">⚡</span>
+        <div>
+          <div class="int-name">Auto-review incoming PRs</div>
+          <div class="int-desc">Watches your repos and reviews new PRs <b>only where your review is
+            requested or you're assigned</b> — never your own PRs, drafts, or bot PRs.</div>
+        </div>
+        ${state.settings.auto_review?.enabled ? `<span class="pill ok">● On</span>` : `<span class="pill idle">Off</span>`}
+      </div>
+      <div class="int-body">
+        <label class="ask-inspect" style="font-size:12.5px">
+          <input type="checkbox" id="auto-review-toggle" ${state.settings.auto_review?.enabled ? "checked" : ""}>
+          Enable — checks every ${Math.round((state.settings.auto_review?.poll_seconds || 120) / 60)} min while the app is open
+        </label>
+      </div>
+      <div class="int-note">Only PRs that arrive after enabling are reviewed (no backfill);
+        at most ${state.settings.auto_review?.max_per_hour ?? 3}/hour, one at a time.</div>
+    </div>
+
+    <div class="set-section-label">Custom review</div>
+    <div class="integration">
+      <div class="int-head">
+        <span class="int-icon" style="background:#8250df">✎</span>
+        <div>
+          <div class="int-name">Review instructions &amp; output</div>
+          <div class="int-desc">Standing instructions steer every review; the template controls what the
+            Summary shows and how findings group.</div>
+        </div>
+      </div>
+      <div class="int-body" style="flex-direction:column;align-items:stretch;gap:8px">
+        <textarea id="cr-instructions" rows="4" maxlength="4000" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:6px;font:12.5px/1.5 inherit;resize:vertical"
+          placeholder="e.g. Always check that behaviour changes come with tests. Flag any console.log. Ignore formatting-only changes.">${esc(state.settings.custom_review?.instructions || "")}</textarea>
+        <div style="display:flex;gap:10px;align-items:center">
+          <button class="btn" id="cr-instructions-save">Save instructions</button>
+          <label class="ask-inspect" style="margin-left:auto">Group findings by
+            <select id="cr-groupby">
+              <option value="severity" ${state.settings.custom_review?.findings_group_by !== "category" ? "selected" : ""}>Severity</option>
+              <option value="category" ${state.settings.custom_review?.findings_group_by === "category" ? "selected" : ""}>Category</option>
+            </select>
+          </label>
+        </div>
+        <div>
+          <div class="int-desc" style="margin-bottom:4px">Summary sections — check to show, arrows to reorder:</div>
+          ${crSectionRows()}
+        </div>
+      </div>
+      <div class="int-note">Instructions are appended to the extract, map, and findings prompts (capped at
+        4,000 chars) — they guide the review but never override its evidence rules.</div>
+    </div>
+
     <div class="set-section-label">PR hosts</div>
     <div class="integration" data-section="github">
       <div class="int-head">
@@ -1872,6 +1972,46 @@ function renderSettings() {
     await api("/api/settings/claude", { method: "PUT", body: { values: { review_skill: e.target.value } } });
     toast(e.target.value ? `Findings will use /${e.target.value}` : "Findings will use built-in /code-review");
     if (state.skills) state.skills.selected = e.target.value;
+  });
+  $("#cr-instructions-save")?.addEventListener("click", async () => {
+    const v = $("#cr-instructions").value.slice(0, 4000);
+    await api("/api/settings/custom_review", { method: "PUT", body: { values: { instructions: v } } });
+    state.settings.custom_review = { ...(state.settings.custom_review || {}), instructions: v };
+    toast("Review instructions saved — applied to the next review run");
+  });
+  $("#cr-groupby")?.addEventListener("change", async (e) => {
+    await api("/api/settings/custom_review", { method: "PUT", body: { values: { findings_group_by: e.target.value } } });
+    state.settings.custom_review = { ...(state.settings.custom_review || {}), findings_group_by: e.target.value };
+    toast(`Findings grouped by ${e.target.value}`);
+    if (state.review) renderReview(state.review);
+  });
+  document.querySelectorAll("[data-cr-toggle],[data-cr-up],[data-cr-down]").forEach((el) => {
+    el.addEventListener("click", async (e) => {
+      const cfg = state.settings.custom_review || {};
+      let order = Array.isArray(cfg.sections) && cfg.sections.length ? [...cfg.sections] : [...SUM_SECTION_KEYS];
+      const k = el.dataset.crToggle || el.dataset.crUp || el.dataset.crDown;
+      if (el.dataset.crToggle !== undefined) {
+        order = order.includes(k) ? order.filter((x) => x !== k) : [...order, k];
+      } else {
+        const i = order.indexOf(k);
+        if (i < 0) return;
+        const j = el.dataset.crUp !== undefined ? i - 1 : i + 1;
+        if (j < 0 || j >= order.length) return;
+        [order[i], order[j]] = [order[j], order[i]];
+      }
+      await api("/api/settings/custom_review", { method: "PUT", body: { values: { sections: order } } });
+      state.settings.custom_review = { ...cfg, sections: order };
+      renderSettings();
+      if (state.review) renderReview(state.review);
+    });
+  });
+  $("#auto-review-toggle")?.addEventListener("change", async (e) => {
+    await api("/api/settings/auto_review", { method: "PUT", body: { values: { enabled: e.target.checked } } });
+    state.settings.auto_review = { ...(state.settings.auto_review || {}), enabled: e.target.checked };
+    toast(e.target.checked
+      ? "Auto-review on — new PRs requesting your review will be reviewed automatically"
+      : "Auto-review off");
+    renderSettings();
   });
   $("#claude-skills-dir")?.addEventListener("change", async (e) => {
     await api("/api/settings/claude", { method: "PUT", body: { values: { skills_dir: e.target.value.trim() } } });

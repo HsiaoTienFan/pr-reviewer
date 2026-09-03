@@ -110,6 +110,7 @@ class GitHubProvider:
             base_branch=(pr.get("base") or {}).get("ref", ""),
             updated_at=pr.get("updated_at", ""),
             state="merged" if pr.get("merged_at") else pr.get("state", "open"),
+            draft=bool(pr.get("draft", False)),
             additions=pr.get("additions", 0),
             deletions=pr.get("deletions", 0),
             assignees=[(a or {}).get("login", "") for a in pr.get("assignees") or []],

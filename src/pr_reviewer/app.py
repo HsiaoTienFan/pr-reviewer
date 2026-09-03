@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -165,6 +165,113 @@ async def claude_status(full: bool = False) -> dict[str, Any]:
     backend = build_backend(config.load_config())
     status = await backend.status(full=full)
     return status.model_dump()
+
+
+# ---------------------------------------------------------------- auto-review watcher
+
+# Scope is a design rule, not a setting: ONLY PRs where the user's review is
+# requested or they are assigned. Never PRs they authored, never whole repos.
+AUTO: dict[str, Any] = {"was_enabled": False, "starts": []}
+_BOT_AUTHORS = {"dependabot", "renovate", "github-actions"}
+
+
+def _auto_candidates(prs: list, me: str, since: datetime | None) -> list:
+    """Which PRs qualify for an automatic review. Pure — unit-tested."""
+    out = []
+    if not me:
+        return out
+    for pr in prs:
+        if pr.state != "open" or pr.draft:
+            continue
+        if pr.author == me:  # tagged/requested only — own PRs are out of scope
+            continue
+        author = (pr.author or "").lower()
+        if author.endswith("[bot]") or author in _BOT_AUTHORS:
+            continue
+        if me not in pr.assignees and me not in pr.reviewers:
+            continue
+        if since is not None:
+            upd = _parse_iso(pr.updated_at)
+            if upd is None or upd <= since:  # no backfill of pre-enable PRs
+                continue
+        out.append(pr)
+    return out
+
+
+async def _auto_review_tick() -> list[str]:
+    cfg = config.load_config()
+    ar = cfg.get("auto_review", {})
+    enabled = bool(ar.get("enabled"))
+    if enabled and not AUTO["was_enabled"]:
+        # rising edge: stamp `since` so pre-existing PRs are never swept in
+        config.update_section(
+            "auto_review", {"since": datetime.now(timezone.utc).isoformat()})
+        cfg = config.load_config()
+        ar = cfg.get("auto_review", {})
+    AUTO["was_enabled"] = enabled
+    if not enabled:
+        return []
+    # one pipeline at a time — never pile onto a manual run either
+    if any(not j.get("done") for j in JOBS.values()):
+        return []
+    import time as _time
+    now = _time.time()
+    AUTO["starts"] = [t for t in AUTO["starts"] if now - t < 3600]
+    if len(AUTO["starts"]) >= int(ar.get("max_per_hour", 3) or 3):
+        return []
+    since = _parse_iso(ar.get("since", ""))
+
+    providers = build_providers(cfg)
+    for pname, provider in providers.items():
+        if not provider.configured():
+            continue
+        try:
+            me = await provider.current_user()
+        except Exception:
+            continue
+        for repo in cfg.get(pname, {}).get("repos", []):
+            try:
+                prs = await provider.list_open_prs(repo)
+            except Exception:
+                continue
+            for pr in _auto_candidates(prs, me, since):
+                rid = f"{pname}:{repo}:{pr.number}"
+                if config.load_review(rid) is not None:
+                    continue
+                try:
+                    res = await start_review(ReviewRequest(
+                        provider=pname, repo=repo, number=pr.number))
+                except HTTPException as e:
+                    print(f"[auto-review] cannot start {rid}: {e.detail}")
+                    return []
+                if res.get("job_id"):
+                    AUTO["starts"].append(now)
+                    print(f"[auto-review] started {rid}: {pr.title[:70]}")
+                    return [rid]  # at most one launch per tick
+    return []
+
+
+async def _auto_review_loop() -> None:
+    await asyncio.sleep(5)  # let the server finish booting
+    while True:
+        try:
+            await _auto_review_tick()
+        except Exception as e:  # a bad tick must never kill the watcher
+            print(f"[auto-review] tick failed: {type(e).__name__}: {e}")
+        poll = int(config.load_config().get("auto_review", {}).get("poll_seconds", 120) or 120)
+        await asyncio.sleep(max(60, poll))
+
+
+@app.on_event("startup")
+async def _start_watcher() -> None:
+    app.state.auto_task = asyncio.create_task(_auto_review_loop())
+
+
+@app.on_event("shutdown")
+async def _stop_watcher() -> None:
+    task = getattr(app.state, "auto_task", None)
+    if task is not None:
+        task.cancel()
 
 
 # ---------------------------------------------------------------- PR listing
@@ -378,12 +485,14 @@ async def start_review(body: ReviewRequest) -> dict[str, Any]:
         from .pipeline import merge_rerun_state
 
         claude_cfg = cfg.get("claude", {})
+        instr = cfg.get("custom_review", {}).get("instructions", "")
         # Findings are part of every review. The skill run is the slowest stage,
         # so it starts now — concurrent with extract/map/flow — and joins below.
         findings_task = asyncio.create_task(collect_findings_raw(
             provider.pr_url(repo, number), backend,
             skill=claude_cfg.get("review_skill", ""),
             skills_dir=claude_cfg.get("skills_dir", ""),
+            instructions=instr,
         ))
         try:
             review = await run_review(
@@ -391,6 +500,7 @@ async def start_review(body: ReviewRequest) -> dict[str, Any]:
                 sources=build_sources(cfg),
                 backend=backend,
                 progress=progress,
+                instructions=instr,
             )
             if prev is not None:
                 progress("save", "Carrying over verified/reviewer state")
@@ -398,7 +508,8 @@ async def start_review(body: ReviewRequest) -> dict[str, Any]:
             progress("findings", "Collecting code-review findings")
             try:
                 findings, report, dropped = await run_code_review(
-                    review, backend, progress, precollected=findings_task)
+                    review, backend, progress, precollected=findings_task,
+                    instructions=instr)
             except LLMError as e:
                 # the review itself succeeded — surface the miss, don't fail the job
                 progress("done", f"Review complete (findings failed: {e} — use ↻ Findings to retry)")
@@ -699,6 +810,7 @@ async def start_code_review(rid: str) -> dict[str, Any]:
                 review, backend, progress,
                 skill=claude_cfg.get("review_skill", ""),
                 skills_dir=claude_cfg.get("skills_dir", ""),
+                instructions=cfg.get("custom_review", {}).get("instructions", ""),
             )
             async with _review_lock(rid):
                 # reload: a re-run may have replaced the review while we worked

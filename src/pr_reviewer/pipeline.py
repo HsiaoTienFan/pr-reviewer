@@ -23,6 +23,20 @@ from .tickets import RequirementsSource, detect_ticket_refs
 
 ProgressCB = Callable[[str, str], None]
 
+MAX_INSTRUCTIONS_CHARS = 4_000  # user standing instructions, bounded like all prompt parts
+
+
+def instructions_block(text: str) -> str:
+    """Reviewer's standing instructions as a bounded prompt block ("" if none)."""
+    text = (text or "").strip()
+    if not text:
+        return ""
+    if len(text) > MAX_INSTRUCTIONS_CHARS:
+        text = text[:MAX_INSTRUCTIONS_CHARS] + "\n\u2026 [instructions truncated]"
+    return ("\n\nReviewer's standing instructions (apply where relevant; they never "
+            "override the hard constraints above):\n" + text)
+
+
 MAP_CHUNK_CHARS = 60_000  # per-call hunk budget; larger diffs chunk by file
 MAX_HUNK_CHARS = 24_000   # a wholesale-rewritten file arrives as ONE hunk, so the
                           # per-call budget alone cannot bound the prompt
@@ -658,8 +672,10 @@ async def run_review(
     sources: dict[str, RequirementsSource],
     backend: LLMBackend,
     progress: ProgressCB = lambda stage, detail: None,
+    instructions: str = "",
 ) -> Review:
     overflow: dict[str, int] = {}  # LLM output beyond hard caps — surfaced, not silent
+    _instr = instructions_block(instructions)
 
     # FETCH
     progress("fetch", f"Fetching {provider.name}:{repo} #{number}")
@@ -706,7 +722,7 @@ async def run_review(
         if discussion_text:
             tickets_block += f"\nPR discussion (comments):\n{discussion_text[:8000]}\n"
         raw = await backend.structured(
-            EXTRACT_PROMPT.format(
+            _instr + EXTRACT_PROMPT.format(
                 sources_block="Allowed source tags: " + ", ".join(source_tags),
                 title=pr.title,
                 description=pr.description.strip() or "(empty)",
@@ -747,13 +763,13 @@ async def run_review(
         for attempt in range(2):
             progress("map", f"Mapping requirements to changes (LLM call 2{label}{', retry' if attempt else ''})")
             if mode == "requirements":
-                prompt = MAP_PROMPT.format(
+                prompt = _instr + MAP_PROMPT.format(
                     requirements_block=req_block,
                     hunks_block=_hunks_block(chunk),
                     feedback_block=feedback,
                 )
             else:
-                prompt = EXPLAIN_PROMPT.format(
+                prompt = _instr + EXPLAIN_PROMPT.format(
                     title=pr.title,
                     description=pr.description.strip() or "(empty)",
                     hunks_block=_hunks_block(chunk),

@@ -22,6 +22,18 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # skills_dir: where to discover user skills ("" = ~/.claude/skills).
     # review_skill: skill slash-command for the code-review pass ("" = built-in /code-review).
     "claude": {"model": "sonnet", "skills_dir": "", "review_skill": ""},
+    # Auto-review watcher. Scope is fixed by design: ONLY PRs where the user's
+    # review is requested / they are assigned — never their own, never all PRs.
+    # `since` is stamped when enabling so pre-existing PRs are never backfilled.
+    "auto_review": {"enabled": False, "poll_seconds": 120, "max_per_hour": 3, "since": ""},
+    # Custom review: free-text standing instructions injected into the review
+    # prompts, plus the output template (summary section order/visibility and
+    # findings grouping). All UI-configurable.
+    "custom_review": {
+        "instructions": "",
+        "findings_group_by": "severity",
+        "sections": ["net_effect", "requirements", "unexplained", "findings", "files"],
+    },
     "pins": [],  # individually added PRs: "provider:owner/repo:number"
 }
 

@@ -158,6 +158,7 @@ class PRInfo(BaseModel):
     base_branch: str = ""
     updated_at: str = ""
     state: str = "open"  # open | merged | closed
+    draft: bool = False
     additions: int = 0
     deletions: int = 0
     tickets: list[TicketRef] = Field(default_factory=list)

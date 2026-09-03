@@ -16,7 +16,7 @@ from .llm.base import LLMBackend, LLMError
 from .llm.claude_cli import SANDBOX_DIR
 from .models import _LEGACY_SEVERITY, Anchor, BugFinding, Hunk, Review
 from .models import ThreadMsg
-from .pipeline import _clamp_patch, _hunks_block, _is_generated
+from .pipeline import _clamp_patch, _hunks_block, _is_generated, instructions_block
 
 _ORIGIN_REPO_RE = re.compile(r"[:/]([^/:\s]+/[^/\s]+?)(?:\.git)?\s*$")
 
@@ -357,6 +357,7 @@ async def collect_findings_raw(
     progress: Callable[[str, str], None] = lambda s, d: None,
     skill: str = "",
     skills_dir: str = "",
+    instructions: str = "",
 ) -> str:
     """URL-only phase: run the review skill on the PR and return its report.
 
@@ -374,7 +375,8 @@ async def collect_findings_raw(
             prompt, tools = resolved
             label = f"/{skill}"
     progress("findings", f"Running Claude Code {label} on the PR")
-    return await backend.text(prompt.format(url=pr_url), allowed_tools=tools)
+    return await backend.text(prompt.format(url=pr_url) + instructions_block(instructions),
+                              allowed_tools=tools)
 
 
 async def run_code_review(
@@ -384,6 +386,7 @@ async def run_code_review(
     skill: str = "",
     skills_dir: str = "",
     precollected: "asyncio.Task[str] | None" = None,
+    instructions: str = "",
 ) -> tuple[list[BugFinding], str, int]:
     """→ (findings, raw report text, findings dropped beyond the cap).
     The raw report is preserved verbatim — the table is a compression of it.
@@ -405,14 +408,16 @@ async def run_code_review(
     elif review.pr.url:
         try:
             report = await collect_findings_raw(
-                review.pr.url, backend, progress, skill=skill, skills_dir=skills_dir)
+                review.pr.url, backend, progress, skill=skill, skills_dir=skills_dir,
+                instructions=instructions)
         except LLMError:
             report = ""
     if report.strip():
         progress("findings", "Structuring the review report")
         try:
             raw = await backend.structured(
-                STRUCTURE_PROMPT.format(hunks_index=_hunks_index(review.hunks), report=report),
+                STRUCTURE_PROMPT.format(hunks_index=_hunks_index(review.hunks), report=report)
+                + instructions_block(instructions),
                 BUGS_SCHEMA,
             )
         except LLMError:
@@ -420,7 +425,8 @@ async def run_code_review(
     if not isinstance(raw, dict) or not isinstance(raw.get("findings"), list):
         progress("code-review", "Skill path unavailable — reviewing the diff directly")
         raw = await backend.structured(
-            FALLBACK_PROMPT.format(title=review.pr.title, hunks_block=_hunks_block(review.hunks)),
+            FALLBACK_PROMPT.format(title=review.pr.title, hunks_block=_hunks_block(review.hunks))
+            + instructions_block(instructions),
             BUGS_SCHEMA,
         )
     findings_raw = raw.get("findings", [])
