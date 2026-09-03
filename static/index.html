@@ -359,6 +359,30 @@
   .fnd-loc.none { color: var(--muted); }
   .fnd-none { padding: 26px; text-align: center; color: var(--muted); font-size: 12.5px; }
 
+  /* ---- Finding page (follow-up Q&A) ---- */
+  .ask-head { margin: 14px 0 10px; }
+  .ask-thread { margin: 16px 0 0; display: flex; flex-direction: column; gap: 10px; }
+  .ask-q {
+    align-self: flex-end; max-width: 78%; background: var(--blue); color: #fff;
+    padding: 8px 13px; border-radius: 12px 12px 3px 12px; font-size: 13px;
+    white-space: pre-wrap;
+  }
+  .ask-a { align-self: stretch; max-width: 100%; }
+  .ask-a .md-report { border-radius: 12px 12px 12px 3px; }
+  .ask-a.pending {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 12px 12px 12px 3px; padding: 10px 14px; color: var(--muted); font-size: 13px;
+  }
+  .ask-box { margin-top: 14px; }
+  .ask-box textarea {
+    width: 100%; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px;
+    font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, sans-serif;
+    resize: vertical; background: var(--panel); color: var(--text);
+  }
+  .ask-box textarea:focus { outline: none; border-color: var(--blue); }
+  .ask-controls { display: flex; align-items: center; gap: 12px; margin-top: 8px; }
+  .ask-inspect { font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 5px; margin-right: auto; }
+
   /* full /code-review report, rendered as markdown */
   .fnd-report { margin-top: 18px; }
   .md-report {
@@ -584,6 +608,10 @@
   <div id="review-content">
     <div class="cc-wrap"><div class="empty-state">No review open — pick a PR in the <b>Command Center</b>.</div></div>
   </div>
+</section>
+
+<section class="screen" id="screen-finding">
+  <div class="cc-wrap" id="finding-content" style="max-width:860px"></div>
 </section>
 
 <section class="screen" id="screen-settings">

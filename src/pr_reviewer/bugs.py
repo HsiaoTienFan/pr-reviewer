@@ -13,8 +13,46 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .llm.base import LLMBackend, LLMError
+from .llm.claude_cli import SANDBOX_DIR
 from .models import _LEGACY_SEVERITY, Anchor, BugFinding, Hunk, Review
-from .pipeline import _hunks_block
+from .models import ThreadMsg
+from .pipeline import _clamp_patch, _hunks_block, _is_generated
+
+_ORIGIN_REPO_RE = re.compile(r"[:/]([^/:\s]+/[^/\s]+?)(?:\.git)?\s*$")
+
+
+def _clone_repo(child: Path) -> str:
+    """owner/repo of a sandbox checkout's origin, or "" if unattributable."""
+    cfg = child / ".git" / "config"
+    try:
+        for line in cfg.read_text(errors="replace").splitlines():
+            line = line.strip()
+            if line.startswith("url = "):
+                m = _ORIGIN_REPO_RE.search(line[6:])
+                return m.group(1).lower() if m else ""
+    except OSError:
+        pass
+    return ""
+
+
+def cleanup_sandbox(active_repos: set[str], root: Path = SANDBOX_DIR) -> list[str]:
+    """Remove sandbox checkouts (repo clones left by review skills) whose repo
+    no longer has any stored review. Dirs we can't attribute to a repo are left
+    alone — never delete what we can't identify."""
+    import shutil
+
+    removed: list[str] = []
+    if not root.is_dir():
+        return removed
+    active = {r.lower() for r in active_repos}
+    for child in sorted(root.iterdir()):
+        if not child.is_dir():
+            continue
+        repo = _clone_repo(child)
+        if repo and repo not in active:
+            shutil.rmtree(child, ignore_errors=True)
+            removed.append(f"{child.name} ({repo})")
+    return removed
 
 BUGS_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -157,6 +195,96 @@ def resolve_review_skill(skill: str, skills_dir: str = "") -> tuple[str, list[st
         if s["name"] == skill:
             return f"/{s['name']} {{url}}", (s["tools"] or SKILL_TOOLS)
     return None
+
+
+ASK_PROMPT = """You are answering a follow-up question about ONE finding from a code review you have context on below. Be direct and technical; cite file:line when you make claims. If the provided context cannot answer the question, say exactly what is missing rather than guessing.
+
+## The finding
+{finding_block}
+
+## Changed code the finding anchors to
+{hunks_block}
+
+## Full review report (context)
+{report_block}
+{thread_block}
+## Question
+{question}"""
+
+# Every component of the ask prompt is HARD-BOUNDED — a finding can anchor to
+# an arbitrarily large hunk and threads grow without limit, so unbounded
+# assembly would recreate the "Prompt is too long" failure MAP chunking fixed.
+ASK_HUNKS_BUDGET = 30_000   # total chars of anchored hunks (each also _clamp_patch'd)
+ASK_REPORT_BUDGET = 20_000
+ASK_THREAD_BUDGET = 20_000  # most recent turns first
+
+
+def _ask_context(review: Review, finding: BugFinding, question: str) -> str:
+    fb = [f"{finding.id} [{finding.severity} / {finding.category}] {finding.title}"]
+    if finding.detail:
+        fb.append(f"Detail: {finding.detail}")
+    if finding.suggestion:
+        fb.append(f"Suggested fix: {finding.suggestion}")
+    where = finding.anchors[0] if finding.anchors else None
+    if where:
+        fb.append(f"Anchored at {where.file}:{where.start}\u2013{where.end}")
+    elif finding.cited_file:
+        fb.append(f"Report cites {finding.cited_file}:{finding.cited_line} (outside the diff)")
+
+    targets = {a.file for a in finding.anchors} or ({finding.cited_file} if finding.cited_file else set())
+    parts, used = [], 0
+    for h in review.hunks:
+        if h.file not in targets:
+            continue
+        if _is_generated(h.file):
+            parts.append(f"### {h.file} — generated file, patch omitted")
+            continue
+        patch = _clamp_patch(h.patch)
+        if used + len(patch) > ASK_HUNKS_BUDGET:
+            parts.append(f"### {h.file} — omitted for size (lines {h.start}\u2013{h.end})")
+            continue
+        used += len(patch)
+        parts.append(f"### {h.id} — {h.file} (new-file lines {h.start}\u2013{h.end})\n{patch}")
+    hunks_block = "\n\n".join(parts) or "(the finding anchors to no changed code)"
+
+    report = review.bugs_report or "(no report stored)"
+    if len(report) > ASK_REPORT_BUDGET:
+        report = report[:ASK_REPORT_BUDGET] + "\n\u2026 [report truncated for size]"
+
+    thread = review.threads.get(finding.id, [])
+    kept: list[ThreadMsg] = []
+    tused = 0
+    for m in reversed(thread):
+        if tused + len(m.text) > ASK_THREAD_BUDGET:
+            break
+        kept.append(m)
+        tused += len(m.text)
+    kept.reverse()
+    tb = ""
+    if kept:
+        dropped = len(thread) - len(kept)
+        lines = [f"{'Q' if m.role == 'user' else 'A'}: {m.text}" for m in kept]
+        note = f"[{dropped} earlier turns omitted for size]\n" if dropped else ""
+        tb = f"\n## Discussion so far\n{note}" + "\n\n".join(lines) + "\n"
+
+    return ASK_PROMPT.format(finding_block="\n".join(fb), hunks_block=hunks_block,
+                             report_block=report, thread_block=tb, question=question.strip())
+
+
+async def ask_finding(
+    review: Review,
+    finding_id: str,
+    question: str,
+    backend: LLMBackend,
+    inspect: bool = False,
+) -> str:
+    """Answer a follow-up question about one finding. inspect=True grants the
+    read-only sandbox tools so the model can look at the repo, else text-only."""
+    finding = next((b for b in review.bugs if b.id == finding_id), None)
+    if finding is None:
+        raise LLMError(f"no finding {finding_id} in this review")
+    prompt = _ask_context(review, finding, question)
+    return await backend.text(prompt, allowed_tools=SKILL_TOOLS if inspect else None)
 
 
 # Skill reports cite files from the sandbox checkout, i.e. absolute paths like

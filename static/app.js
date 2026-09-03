@@ -964,7 +964,7 @@ function findingsTabHtml(r) {
         : (b.cited_file
           ? `<span class="fnd-loc none" title="${esc(b.cited_file)}:${b.cited_line || "?"} — cited by the report but outside the changed lines">${esc(b.cited_file.split("/").pop())}<i>${b.cited_line ? `:${b.cited_line}` : ""} · off-diff</i></span>`
           : `<span class="fnd-loc none" title="The report gave no location">—</span>`);
-      rows += `<tr class="fnd-row" data-cat="${cat}" data-goto-card="${esc(b.id)}">
+      rows += `<tr class="fnd-row" data-cat="${cat}" data-open-finding="${esc(b.id)}">
         <td class="fnd-id"><span class="fnd-badge" style="background:${SEV_COLORS[sev]}">${esc(b.id)}</span></td>
         <td class="fnd-cat"><span class="fnd-cat-tag c-${cat}">${esc(CAT_LABEL[cat])}</span></td>
         <td class="fnd-what">
@@ -987,6 +987,88 @@ function findingsTabHtml(r) {
     </table>
     <div class="fnd-none" style="display:none">No findings in this category.</div>
     ${reportHtml}`;
+}
+
+/* ---- Finding page: one finding + follow-up Q&A thread ---- */
+
+function showFindingPage(fid) {
+  state.findingId = fid;
+  renderFindingPage();
+  show("finding");
+}
+
+function renderFindingPage() {
+  const r = state.review, fid = state.findingId;
+  const b = (r?.bugs || []).find((x) => x.id === fid);
+  if (!b) { $("#finding-content").innerHTML = `<div class="empty-state">Finding not found.</div>`; return; }
+  const sev = SEV_LABEL[b.severity] ? b.severity : "minor";
+  const cat = CAT_LABEL[b.category] ? b.category : "other";
+  const a = (b.anchors || [])[0];
+  const loc = a
+    ? `<a class="fnd-loc" data-back-goto="${esc(a.file)}|${a.start}">${esc(a.file)}:${a.start}${a.end !== a.start ? `–${a.end}` : ""} ↗</a>`
+    : (b.cited_file ? `<span class="fnd-loc none">${esc(b.cited_file)}${b.cited_line ? `:${b.cited_line}` : ""} · off-diff</span>` : "");
+  const thread = (r.threads || {})[fid] || [];
+  const msgs = thread.map((m) => m.role === "user"
+    ? `<div class="ask-q">${esc(m.text)}</div>`
+    : `<div class="ask-a">${mdBlock(m.text)}</div>`).join("");
+  const pending = state.askPending ? `<div class="ask-q">${esc(state.askPending)}</div>
+    <div class="ask-a pending"><span class="spin"></span> Thinking${state.askInspect ? " (inspecting the repo — this takes a few minutes)" : ""}…</div>` : "";
+  $("#finding-content").innerHTML = `
+    <div class="ask-head">
+      <span class="filter" data-back-review>‹ Back to review</span>
+    </div>
+    <div class="card" style="border-left:4px solid ${SEV_COLORS[sev]}">
+      <div class="card-top">
+        <span class="rid" style="background:${SEV_COLORS[sev]}">${esc(b.id)}</span>
+        <span class="fnd-cat-tag c-${cat}">${esc(CAT_LABEL[cat])}</span>
+        <div><div class="req-text">${md(b.title)}</div></div>
+      </div>
+      ${b.detail ? `<div class="mechanism">${md(b.detail)}</div>` : ""}
+      ${b.suggestion ? `<div class="missing-note">Fix: ${md(b.suggestion)}</div>` : ""}
+      ${loc ? `<div class="anchors">${loc}</div>` : ""}
+    </div>
+    <div class="ask-thread">${msgs}${pending}</div>
+    <div class="ask-box">
+      <textarea id="ask-input" rows="3" placeholder="Ask about this finding — e.g. 'Is this reachable from a public route?'"></textarea>
+      <div class="ask-controls">
+        <label class="ask-inspect"><input type="checkbox" id="ask-inspect"> Let it inspect the repo (slower, deeper)</label>
+        <button class="btn primary" id="ask-send" ${state.askPending ? "disabled" : ""}>Ask</button>
+      </div>
+    </div>`;
+  $("#ask-send")?.addEventListener("click", sendAsk);
+  $("#ask-input")?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) sendAsk();
+  });
+  const t = document.querySelector(".ask-thread");
+  if (t) t.scrollTop = t.scrollHeight;
+}
+
+async function sendAsk() {
+  const q = $("#ask-input")?.value.trim();
+  if (!q || state.askPending) return;
+  state.askPending = q;
+  state.askInspect = $("#ask-inspect")?.checked || false;
+  renderFindingPage();
+  try {
+    const { job_id } = await api(
+      `/api/reviews/${encodeURIComponent(state.review.id)}/findings/${state.findingId}/ask`,
+      { method: "POST", body: { question: q, inspect: state.askInspect } });
+    for (;;) {
+      await new Promise((res) => setTimeout(res, 2500));
+      const job = await api(`/api/jobs/${job_id}`);
+      if (job.done) {
+        if (job.error) toast(`Ask failed: ${job.error}`, true);
+        break;
+      }
+    }
+    state.review = await api(`/api/reviews/${encodeURIComponent(state.review.id)}/data`,
+                             { timeoutMs: 60_000 });
+  } catch (e) {
+    toast(`Ask failed: ${e.message}`, true);
+  } finally {
+    state.askPending = null;
+    renderFindingPage();
+  }
 }
 
 /* ---- Summary tab: the whole review as a scannable grid ---- */
@@ -1317,6 +1399,7 @@ function renderReview() {
           ${b.detail ? `<div class="mechanism">${md(b.detail)}</div>` : ""}
           ${b.suggestion ? `<div class="missing-note">Fix: ${md(b.suggestion)}</div>` : ""}
           ${anchors ? `<div class="anchors">${anchors}</div>` : ""}
+          <div class="card-foot"><button class="btn small" data-open-finding="${b.id}">💬 Ask${(r.threads?.[b.id]?.length) ? ` · ${r.threads[b.id].length / 2}` : ""}</button></div>
         </div>`;
     }
   }
@@ -1895,6 +1978,25 @@ document.addEventListener("click", (e) => {
   if (e.target.closest("[data-retry-prs]")) {
     $("#cc-content").innerHTML = `<div class="empty-state">Loading…</div>`;
     loadPRs();
+    return;
+  }
+
+  const openFinding = e.target.closest("[data-open-finding]");
+  if (openFinding && !e.target.closest("a")) {
+    showFindingPage(openFinding.dataset.openFinding);
+    return;
+  }
+  if (e.target.closest("[data-back-review]")) {
+    show("review");
+    return;
+  }
+  const backGoto = e.target.closest("[data-back-goto]");
+  if (backGoto) {
+    const [file, line] = backGoto.dataset.backGoto.split("|");
+    show("review");
+    showReviewTab("diff");
+    const row = document.querySelector(`tr[data-file="${CSS.escape(file)}"][data-line="${line}"]`);
+    row?.scrollIntoView({ behavior: "smooth", block: "center" });
     return;
   }
 

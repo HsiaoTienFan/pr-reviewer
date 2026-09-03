@@ -530,9 +530,66 @@ async def get_review(rid: str) -> Any:
 
 @app.delete("/api/reviews/{rid:path}")
 async def remove_review(rid: str) -> dict[str, Any]:
+    from .bugs import cleanup_sandbox
+
     if not config.delete_review(rid):
         raise HTTPException(404, "no stored review")
-    return {"deleted": rid}
+    # review skills clone the PR's repo into the sandbox; once the last review
+    # for a repo is gone, its checkout has no reason to stay on disk
+    active = {r.pr.repo for r in config.all_reviews()}
+    removed = cleanup_sandbox(active)
+    return {"deleted": rid, "sandbox_removed": removed}
+
+
+class AskRequest(BaseModel):
+    question: str
+    inspect: bool = False
+
+
+@app.post("/api/reviews/{rid:path}/findings/{fid}/ask")
+async def ask_about_finding(rid: str, fid: str, body: AskRequest) -> dict[str, Any]:
+    from .bugs import ask_finding
+    from .models import ThreadMsg
+
+    review = config.load_review(rid)
+    if review is None:
+        raise HTTPException(404, "no stored review")
+    if not any(b.id == fid for b in review.bugs):
+        raise HTTPException(404, f"no finding {fid}")
+    q = body.question.strip()
+    if not q:
+        raise HTTPException(400, "empty question")
+
+    cfg = config.load_config()
+    backend = build_backend(cfg)
+    job_id = uuid.uuid4().hex[:12]
+    job = {"stage": "ask", "detail": f"Answering question about {fid}", "error": None,
+           "done": False, "review_id": rid, "answer": None}
+    JOBS[job_id] = job
+
+    async def run() -> None:
+        from datetime import datetime, timezone
+        try:
+            answer = await ask_finding(review, fid, q, backend, inspect=body.inspect)
+            now = datetime.now(timezone.utc).isoformat()
+            async with _review_lock(rid):
+                latest = config.load_review(rid) or review
+                thread = latest.threads.setdefault(fid, [])
+                thread.append(ThreadMsg(role="user", text=q, ts=now))
+                thread.append(ThreadMsg(role="assistant", text=answer, ts=now))
+                config.save_review(latest)
+            job["answer"] = answer
+        except asyncio.CancelledError:
+            job["error"] = "Cancelled"
+            raise
+        except Exception as e:
+            job["error"] = f"{type(e).__name__}: {e}"
+        finally:
+            job["done"] = True
+            TASKS.pop(job_id, None)
+
+    TASKS[job_id] = asyncio.create_task(run())
+    return {"job_id": job_id, "review_id": rid}
 
 
 class PublishRequest(BaseModel):

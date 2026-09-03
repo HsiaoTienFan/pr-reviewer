@@ -497,3 +497,52 @@ def test_findings_anchor_despite_sandbox_paths():
     assert not b.anchors and (b.cited_file, b.cited_line) == ("server/passport.js", 125)
 
     assert not out[2].anchors and out[2].cited_file == ""
+
+
+def test_cleanup_sandbox_removes_only_orphaned_clones(tmp_path):
+    """Sandbox checkouts go away with their last review; anything we cannot
+    attribute to a repo is never deleted."""
+    from pr_reviewer.bugs import cleanup_sandbox
+
+    def clone(name, url):
+        d = tmp_path / name / ".git"
+        d.mkdir(parents=True)
+        (d / "config").write_text(f'[remote "origin"]\n\turl = {url}\n')
+
+    clone("repo", "https://github.com/acme/gone.git")       # review deleted
+    clone("keep", "https://github.com/acme/active.git")     # review remains
+    clone("sshy", "git@github.com:acme/alsogone.git")       # ssh-style url
+    (tmp_path / "mystery").mkdir()                          # not a git checkout
+
+    removed = cleanup_sandbox({"acme/active"}, root=tmp_path)
+
+    assert sorted(removed) == ["repo (acme/gone)", "sshy (acme/alsogone)"]
+    assert not (tmp_path / "repo").exists()
+    assert (tmp_path / "keep").exists()
+    assert (tmp_path / "mystery").exists()  # unattributable — left alone
+
+
+def test_ask_context_is_bounded_against_chunking_regression():
+    """A finding can anchor to a 1.6MB hunk and threads grow forever — the ask
+    prompt must stay bounded anyway (the MAP 'Prompt is too long' lesson)."""
+    from pr_reviewer.bugs import _ask_context
+    from pr_reviewer.models import BugFinding, Hunk, PRInfo, Review, ThreadMsg
+
+    huge = Hunk(id="H1", file="src/big.js", start=1, end=99999, patch="x" * 1_600_000)
+    gen = Hunk(id="H2", file="cypress/fixtures/data.js", start=1, end=9, patch="y" * 500_000)
+    finding = BugFinding(id="B1", severity="blocker", category="security",
+                         title="t", detail="d",
+                         anchors=[], cited_file="src/big.js", cited_line=5)
+    review = Review(
+        id="github:x/y:1",
+        pr=PRInfo(provider="github", repo="x/y", number=1, url="", title="t"),
+        mode="requirements", hunks=[huge, gen], bugs=[finding],
+        bugs_report="r" * 100_000,
+        threads={"B1": [ThreadMsg(role="user", text="q" * 2000),
+                        ThreadMsg(role="assistant", text="a" * 2000)] * 50},
+    )
+    prompt = _ask_context(review, finding, "why?")
+    # every component clamped -> total far below anything near a context limit
+    assert len(prompt) < 120_000, f"ask prompt unbounded: {len(prompt):,} chars"
+    assert "[report truncated for size]" in prompt
+    assert "earlier turns omitted for size" in prompt

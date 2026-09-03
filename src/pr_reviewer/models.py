@@ -88,6 +88,14 @@ class BugFinding(BaseModel):
         return _LEGACY_SEVERITY.get(v, v) if isinstance(v, str) else v
 
 
+class ThreadMsg(BaseModel):
+    """One turn in a follow-up Q&A thread attached to a finding."""
+
+    role: Literal["user", "assistant"]
+    text: str
+    ts: str = ""  # ISO-8601
+
+
 class DiffRow(BaseModel):
     """One row of the split (side-by-side) diff. Either a hunk-gap header or
     an old/new line pair; o/n are (line_number, text)."""
@@ -184,6 +192,7 @@ class Review(BaseModel):
     bugs_ran: bool = False  # distinguishes "ran, clean" from "not run yet"
     bugs_stale: bool = False  # findings carried across a re-run, not re-derived
     bugs_report: str = ""  # the raw /code-review report the findings were structured from
+    threads: dict[str, list[ThreadMsg]] = Field(default_factory=dict)  # finding id -> Q&A
     overflow: dict[str, int] = Field(default_factory=dict)  # cap-truncated item counts, keyed by section
     llm_usage: dict[str, float] = Field(default_factory=dict)  # calls / cost_usd (API-equivalent) / ms
     flow: FlowGraph = Field(default_factory=FlowGraph)
