@@ -649,6 +649,23 @@ def test_linear_oauth_helpers():
     assert build_sources(cfg)["linear"]._auth() == "lin_api_SYNTHETIC"
 
 
+def test_linear_source_falls_back_to_env_var(monkeypatch):
+    """LINEAR_API_KEY is used only when config has neither an api key nor an
+    OAuth token — a configured value always wins over the environment."""
+    from pr_reviewer.tickets import build_sources
+
+    monkeypatch.setenv("LINEAR_API_KEY", "lin_api_FROM_ENV")
+    cfg = {"linear": {"api_key": "", "oauth_access_token": ""}, "jira": {}}
+    assert build_sources(cfg)["linear"]._auth() == "lin_api_FROM_ENV"
+
+    cfg["linear"]["api_key"] = "lin_api_CONFIGURED"
+    assert build_sources(cfg)["linear"]._auth() == "lin_api_CONFIGURED"
+
+    monkeypatch.delenv("LINEAR_API_KEY", raising=False)
+    cfg["linear"]["api_key"] = ""
+    assert build_sources(cfg)["linear"]._auth() == ""
+
+
 def test_validate_architecture_keeps_notes_drops_bad_anchors():
     from pr_reviewer.pipeline import validate_architecture
 
