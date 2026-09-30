@@ -154,6 +154,7 @@ const SEV_COLORS = {
 // severity = how much it matters; category = what kind of issue it is
 const SEV_ORDER = ["blocker", "major", "minor", "nit"];
 const SEV_LABEL = { blocker: "Blocker", major: "Major", minor: "Minor", nit: "Nit" };
+const SEV_PILL = { blocker: "err", major: "warn", minor: "warn", nit: "idle" };
 const SEV_BLURB = {
   blocker: "must fix before merge",
   major: "real risk — should fix",
@@ -1360,7 +1361,6 @@ function summaryTabHtml(r) {
 
   html += "<!--SEC:findings-->";
   if (r.bugs_ran) {
-    const sevPill = { high: "err", medium: "warn", low: "idle" };
     html += `<div class="sum-section">Code review findings · ${r.bugs.length}${r.bugs_stale ? ` <span class="sum-missing">⚠ carried from a previous run</span>` : ""}</div>`;
     if (!r.bugs.length) {
       html += `<div class="sum-net sum-muted">No findings — clean pass.</div>`;
@@ -1369,8 +1369,9 @@ function summaryTabHtml(r) {
         <th class="sum-fit">Severity</th><th>Finding</th><th>Fix</th><th>Where</th>
       </tr></thead><tbody>`;
       for (const b of r.bugs) {
+        const sev = SEV_LABEL[b.severity] ? b.severity : "minor";
         html += `<tr data-goto-card="${b.id}">
-          <td class="sum-fit"><span class="pill ${sevPill[b.severity]}">${b.severity}</span></td>
+          <td class="sum-fit"><span class="pill ${SEV_PILL[sev]}">${SEV_LABEL[sev]}</span></td>
           <td><b>${md(b.title)}</b>${b.detail ? `<div class="sum-muted">${md(b.detail)}</div>` : ""}</td>
           <td class="sum-muted">${esc(b.suggestion || "—")}</td>
           <td>${whereChips(b.anchors)}</td>
@@ -1640,8 +1641,6 @@ function renderReview() {
   }
 
   /* ---- code review (bug findings) section ---- */
-  const sevPill = { high: "err", medium: "warn", low: "idle" };
-  const sevLabel = { high: "▲ High", medium: "◆ Medium", low: "● Low" };
   if (r.bugs_ran) {
     railHtml += `<div class="rail-section-label">Code review · ${(r.bugs || []).length}</div>`;
     if (r.bugs_stale) {
@@ -1651,13 +1650,14 @@ function renderReview() {
       railHtml += `<div class="empty-state" style="padding:12px;font-size:12.5px">No findings — clean pass.</div>`;
     }
     for (const b of r.bugs || []) {
+      const sev = SEV_LABEL[b.severity] ? b.severity : "minor";
       const anchors = b.anchors.map((a) =>
         `<span class="anchor" data-file="${esc(a.file)}" data-start="${a.start}" data-end="${a.end}">${esc(a.file)}:${a.start}–${a.end}</span>`).join("");
       railHtml += `
         <div class="card" id="card-${b.id}" data-card-id="${b.id}" style="border-left:4px solid ${colorFor(b.id)}">
           <div class="card-top">
             <span class="rid" style="background:${colorFor(b.id)}">${b.id}</span>
-            <span class="pill ${sevPill[b.severity]}" style="margin-top:2px">${sevLabel[b.severity]}</span>
+            <span class="pill ${SEV_PILL[sev]}" style="margin-top:2px">${SEV_LABEL[sev]}</span>
             <div><div class="req-text">${esc(b.title)}</div></div>
           </div>
           ${b.detail ? `<div class="mechanism">${md(b.detail)}</div>` : ""}
