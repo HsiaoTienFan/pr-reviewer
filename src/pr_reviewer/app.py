@@ -624,6 +624,7 @@ class ReviewRequest(BaseModel):
     repo: str | None = None
     number: int | None = None
     force: bool = False  # False → reuse a stored review instead of re-analyzing
+    include_findings: bool = True  # False → requirements/flow prepass only
 
 
 @app.post("/api/reviews")
@@ -674,14 +675,16 @@ async def start_review(body: ReviewRequest) -> dict[str, Any]:
 
         claude_cfg = cfg.get("claude", {})
         instr = cfg.get("custom_review", {}).get("instructions", "")
-        # Findings are part of every review. The skill run is the slowest stage,
-        # so it starts now — concurrent with extract/map/flow — and joins below.
-        findings_task = asyncio.create_task(collect_findings_raw(
-            provider.pr_url(repo, number), backend,
-            skill=claude_cfg.get("review_skill", ""),
-            skills_dir=claude_cfg.get("skills_dir", ""),
-            instructions=instr,
-        ))
+        # The app includes findings by default. API clients may request only the
+        # structured requirements/flow prepass and run their own defect review.
+        findings_task = None
+        if body.include_findings:
+            findings_task = asyncio.create_task(collect_findings_raw(
+                provider.pr_url(repo, number), backend,
+                skill=claude_cfg.get("review_skill", ""),
+                skills_dir=claude_cfg.get("skills_dir", ""),
+                instructions=instr,
+            ))
         try:
             review = await run_review(
                 provider, repo, number,
@@ -693,39 +696,42 @@ async def start_review(body: ReviewRequest) -> dict[str, Any]:
             if prev is not None:
                 progress("save", "Carrying over verified/reviewer state")
                 await merge_rerun_state(review, prev, backend, progress)
-            # the mapping is saved — the UI can open the review NOW; findings
-            # keep running and land in place when ready
+            # The mapping is saved — the UI can open the review now. When
+            # enabled, findings keep running and land in place when ready.
             job["review_ready"] = True
-            progress("findings", "Collecting code-review findings")
-            try:
-                findings, report, dropped = await run_code_review(
-                    review, backend, progress, precollected=findings_task,
-                    instructions=instr)
-            except LLMError as e:
-                # the review itself succeeded — surface the miss, don't fail the job
-                progress("done", f"Review complete (findings failed: {e} — use ↻ Findings to retry)")
+            if findings_task is None:
+                progress("done", "Requirements and flow analysis complete")
             else:
-                async with _review_lock(rid):
-                    from .bugs import carry_finding_edits
-                    latest = config.load_review(rid) or review
-                    latest.bugs = carry_finding_edits(latest.bugs, findings)
-                    latest.bugs_ran = True
-                    latest.bugs_stale = False
-                    latest.bugs_report = report
-                    if dropped:
-                        latest.overflow = {**latest.overflow, "findings": dropped}
-                    # re-snapshot usage: the findings calls happened after
-                    # run_review took its snapshot, so totals were undercounted
-                    latest.llm_usage = dict(getattr(backend, "usage", {}) or {})
-                    config.save_review(latest)
-                progress("done", "Review complete")
+                progress("findings", "Collecting code-review findings")
+                try:
+                    findings, report, dropped = await run_code_review(
+                        review, backend, progress, precollected=findings_task,
+                        instructions=instr)
+                except LLMError as e:
+                    # the review itself succeeded — surface the miss, don't fail the job
+                    progress("done", f"Review complete (findings failed: {e} — use ↻ Findings to retry)")
+                else:
+                    async with _review_lock(rid):
+                        from .bugs import carry_finding_edits
+                        latest = config.load_review(rid) or review
+                        latest.bugs = carry_finding_edits(latest.bugs, findings)
+                        latest.bugs_ran = True
+                        latest.bugs_stale = False
+                        latest.bugs_report = report
+                        if dropped:
+                            latest.overflow = {**latest.overflow, "findings": dropped}
+                        # re-snapshot usage: the findings calls happened after
+                        # run_review took its snapshot, so totals were undercounted
+                        latest.llm_usage = dict(getattr(backend, "usage", {}) or {})
+                        config.save_review(latest)
+                    progress("done", "Review complete")
         except asyncio.CancelledError:
             job["error"] = "Cancelled"
             raise
         except Exception as e:  # surfaced to the UI, not swallowed
             job["error"] = f"{type(e).__name__}: {e}"
         finally:
-            if not findings_task.done():
+            if findings_task is not None and not findings_task.done():
                 findings_task.cancel()
             job["done"] = True
             RUNNING.pop(rid, None)

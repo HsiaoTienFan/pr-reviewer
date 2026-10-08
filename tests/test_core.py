@@ -71,6 +71,79 @@ def test_detect_ticket_refs_dedup_and_order():
     assert detect_ticket_refs("no refs here") == []
 
 
+def test_review_request_can_disable_findings_prepass():
+    from pr_reviewer.app import ReviewRequest
+
+    assert ReviewRequest(url="https://github.com/example/widgets/pull/7").include_findings is True
+    request = ReviewRequest(
+        url="https://github.com/example/widgets/pull/7",
+        include_findings=False,
+    )
+    assert request.include_findings is False
+
+
+async def test_start_review_skips_findings_when_disabled(monkeypatch):
+    from types import SimpleNamespace
+
+    from pr_reviewer import app as app_mod
+    from pr_reviewer import bugs, config as cfg_mod
+    from pr_reviewer.models import PRInfo, Review
+
+    class FakeProvider:
+        name = "github"
+
+        @staticmethod
+        def pr_url(repo, number):
+            return f"https://github.com/{repo}/pull/{number}"
+
+    class FakeBackend:
+        usage = {}
+
+        @staticmethod
+        async def status():
+            return SimpleNamespace(ready=True, summary="ready", fix="")
+
+    async def fake_token(cfg):
+        return cfg
+
+    async def fake_review(provider, repo, number, **kwargs):
+        return Review(
+            id=f"github:{repo}:{number}",
+            pr=PRInfo(
+                provider="github",
+                repo=repo,
+                number=number,
+                url=provider.pr_url(repo, number),
+                title="Synthetic change",
+            ),
+            mode="explain",
+        )
+
+    async def unexpected_findings(*args, **kwargs):
+        raise AssertionError("findings pass should not start")
+
+    monkeypatch.setattr(cfg_mod, "load_config", lambda: {})
+    monkeypatch.setattr(cfg_mod, "load_review", lambda rid: None)
+    monkeypatch.setattr(app_mod, "ensure_linear_token", fake_token)
+    monkeypatch.setattr(app_mod, "build_providers", lambda cfg: {"github": FakeProvider()})
+    monkeypatch.setattr(app_mod, "build_backend", lambda cfg: FakeBackend())
+    monkeypatch.setattr(app_mod, "run_review", fake_review)
+    monkeypatch.setattr(bugs, "collect_findings_raw", unexpected_findings)
+
+    result = await app_mod.start_review(app_mod.ReviewRequest(
+        provider="github",
+        repo="example/widgets",
+        number=7,
+        include_findings=False,
+    ))
+    await app_mod.TASKS[result["job_id"]]
+
+    job = app_mod.JOBS[result["job_id"]]
+    assert job["done"] is True
+    assert job["error"] is None
+    assert job["detail"] == "Requirements and flow analysis complete"
+
+
 def _hunks() -> list[Hunk]:
     return [
         Hunk(id="H1", file="auth/lockout.py", start=1, end=5, patch="..."),
