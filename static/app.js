@@ -134,6 +134,12 @@ function ticketBadge(t) {
   return `<span class="badge ${cls}">${icon}${esc(t.key)}</span>`;
 }
 
+function prUrlFor(provider, repo, number) {
+  return provider === "bitbucket"
+    ? `https://bitbucket.org/${repo}/pull-requests/${number}`
+    : `https://github.com/${repo}/pull/${number}`;
+}
+
 function srcBadge(source) {
   if (source === "pr-description") return `<span class="badge prdesc">PR description</span>`;
   if (source === "pr-discussion") return `<span class="badge prdesc">PR discussion</span>`;
@@ -1684,6 +1690,8 @@ function renderReview() {
       <div class="pr-meta">
         <span><code>${esc(pr.branch)}</code> → <code>${esc(pr.base_branch)}</code></span>
         ${pr.tickets.map(ticketBadge).join("")}
+        ${(r.stack_bases || []).map((n) =>
+          `<a class="badge none" style="text-decoration:none" href="${esc(prUrlFor(pr.provider, pr.repo, n))}" target="_blank" rel="noopener">Stacked on #${n}</a>`).join("")}
         ${r.mode === "requirements" ? `<span class="badge prdesc">PR description</span>` : `<span class="badge none">explain mode</span>`}
         <span class="verify-progress">
           <span><b id="verified-count">${verifiedCount}</b>/${claims.length} claims verified</span>

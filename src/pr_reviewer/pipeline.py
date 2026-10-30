@@ -60,6 +60,36 @@ def _is_generated(path: str) -> bool:
     return bool(GENERATED_RE.search(path))
 
 
+# "stacked on #123", "stacked on [#123](url)", "depends on #123" — a linked
+# list after the keyword ("stacked on #123, #124") is captured too.
+_STACK_RE = re.compile(
+    r"(?:stacked on|depends on)\s*:?\s*"
+    r"(\[?#\d+\]?(?:\([^)\s]*\))?(?:\s*(?:,|and)\s*\[?#\d+\]?(?:\([^)\s]*\))?)*)",
+    re.IGNORECASE,
+)
+_STACK_NUM_RE = re.compile(r"#(\d+)")
+
+
+def parse_stack_bases(description: str) -> list[int]:
+    """PR numbers this PR is stacked on, from its description. Order-preserving,
+    deduplicated. We only record the reference here — fetching/diffing the base
+    PRs is future work."""
+    out: list[int] = []
+    for m in _STACK_RE.finditer(description or ""):
+        for n in _STACK_NUM_RE.findall(m.group(1)):
+            num = int(n)
+            if num not in out:
+                out.append(num)
+    return out
+
+
+def _stack_note(stack_bases: list[int]) -> str:
+    if not stack_bases:
+        return ""
+    nums = ", #".join(str(n) for n in stack_bases)
+    return f"\nNote: this PR is stacked on #{nums} — changes from that base PR may already appear in this diff.\n"
+
+
 def _clamp_patch(patch: str) -> str:
     """Bound a single hunk so one oversized file cannot overflow the prompt."""
     if len(patch) <= MAX_HUNK_CHARS:
@@ -167,7 +197,7 @@ PR title: {title}
 
 PR description:
 {description}
-{tickets_block}"""
+{tickets_block}{stack_note}"""
 
 MAP_PROMPT = """You map stated requirements to the hunks of a PR diff, producing evidence-backed links.
 
@@ -751,6 +781,7 @@ async def run_review(
     # FETCH
     progress("fetch", f"Fetching {provider.name}:{repo} #{number}")
     pr: PRContent = await provider.fetch(repo, number)
+    stack_bases = parse_stack_bases(pr.description)
 
     # PARSE
     progress("parse", "Parsing diff into hunks")
@@ -798,6 +829,7 @@ async def run_review(
                 title=pr.title,
                 description=pr.description.strip() or "(empty)",
                 tickets_block=tickets_block,
+                stack_note=_stack_note(stack_bases),
             ),
             EXTRACT_SCHEMA,
         )
@@ -921,6 +953,7 @@ async def run_review(
         files=files,
         flow=flow,
         created_at=datetime.now(timezone.utc).isoformat(),
+        stack_bases=stack_bases,
     )
     progress("save", "Saving review")
     save_review(review)

@@ -220,6 +220,7 @@ class Review(BaseModel):
     published_at: str = ""
     verified: list[str] = Field(default_factory=list)  # card ids checked off
     created_at: str = ""
+    stack_bases: list[int] = Field(default_factory=list)  # PR numbers this PR is stacked on
 
 
 def review_id(provider: str, repo: str, number: int) -> str:

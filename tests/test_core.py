@@ -71,6 +71,20 @@ def test_detect_ticket_refs_dedup_and_order():
     assert detect_ticket_refs("no refs here") == []
 
 
+def test_parse_stack_bases_matches_plain_linked_and_depends_refs():
+    from pr_reviewer.pipeline import parse_stack_bases
+
+    assert parse_stack_bases("Stacked on #123, adds the lockout table.") == [123]
+    assert parse_stack_bases(
+        "stacked on [#123](https://github.com/x/y/pull/123)\n\nAdds lockout."
+    ) == [123]
+    assert parse_stack_bases("This depends on #45 for the schema change.") == [45]
+    # multiple bases, one mention each, order preserved and deduplicated
+    assert parse_stack_bases("Stacked on #10 and #11. Also depends on #10.") == [10, 11]
+    assert parse_stack_bases("No stack references here.") == []
+    assert parse_stack_bases("") == []
+
+
 def _hunks() -> list[Hunk]:
     return [
         Hunk(id="H1", file="auth/lockout.py", start=1, end=5, patch="..."),
