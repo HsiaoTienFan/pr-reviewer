@@ -47,7 +47,9 @@ uv run uvicorn pr_reviewer.app:app --host 127.0.0.1 --port 8712
   populate the Command Center. Public repos work without a token.
 - **Bitbucket** — username + app password (pull request read scope).
 - **Linear / Jira** — API credentials for ticket-grounded reviews; PR
-  description is always used as a source.
+  description is always used as a source. Linear also falls back to the
+  `LINEAR_API_KEY` environment variable when no key or OAuth token is
+  configured, so a key can be shared with other tools.
 
 Tokens live in `~/.pr-reviewer/config.json`; reviews in `~/.pr-reviewer/reviews/`.
 
