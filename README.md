@@ -59,6 +59,11 @@ requirement chips, evidence-backed fulfillment cards, gap/unexplained flags,
 net-effect summary, and a mark-verified checklist. PRs with no stated
 requirements fall back to explain mode (annotated changes + net effect).
 
+API clients that perform their own defect pass can request only the structured
+requirements and flow analysis by posting `{"url":"<PR_URL>",
+"include_findings":false}` to `/api/reviews`. Interactive app reviews continue
+to include findings by default.
+
 ## Tests
 
 ```bash
